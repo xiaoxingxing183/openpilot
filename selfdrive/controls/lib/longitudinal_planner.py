@@ -159,6 +159,9 @@ class LongitudinalPlanner(LongitudinalPlannerDP):
       # 從 DP 父類別取得 accel_controller 的最大加速度限制
       if dp_accel_clip := LongitudinalPlannerDP.get_accel_clip(self, v_ego, mode):
         accel_clip = dp_accel_clip
+        # 【關鍵修正】：強制把最終煞車下限還給物理極限，不讓 ACC 控制器越權攔截！
+        accel_clip[0] = ACCEL_MIN
+        
       else:
         accel_clip = [ACCEL_MIN, get_max_accel(v_ego)]
         
