@@ -43,7 +43,7 @@ SOFT_HOLD_TTC_THRESHOLD = 3.0          # [新增] TTC 大於此數值時，暫�
 
 # 車速 (km/h) 對應 最高加速度限制 (m/s²) 的插值陣列
 SOFT_HOLD_SPEED_BP = [10.0, 20.0, 30.0, 40.0, 50.0]
-SOFT_HOLD_ACCEL_V  = [ 0.30,  0.20,  0.15,  0.10,  0.00]
+SOFT_HOLD_ACCEL_V  = [ 0.30,  0.20,  0.15,  0.10,  0.0]
 
 
 class ACM:
@@ -128,9 +128,13 @@ class ACM:
             not in_cooldown and
             self._is_in_coast_window)
 
-  def update_states(self, cc, rs, user_ctrl_lon, v_ego, v_cruise, personality=log.LongitudinalPersonality.standard, dtsc_is_active=False):
+  # [修改] 加入 mode 參數
+  def update_states(self, cc, rs, user_ctrl_lon, v_ego, v_cruise, mode='acc', personality=log.LongitudinalPersonality.standard, dtsc_is_active=False):
     self.personality = personality
     self._dtsc_is_active = dtsc_is_active 
+    
+    # [新增] 紀錄目前是否為一般模式 (acc)
+    self._is_normal_mode = (mode == 'acc')
 
     if not self.enabled or len(cc.orientationNED) != 3:
       self.active = False
@@ -167,14 +171,35 @@ class ACM:
     current_soft_hold_accel = np.interp(v_ego_kph, SOFT_HOLD_SPEED_BP, SOFT_HOLD_ACCEL_V)
 
     if lead is not None and lead.status:
-        is_lead_braking = lead.aLeadK < -0.1
+        # =========================================================================
+        # [台灣市區特化版] 四階段防禦性煞車判定 (Defensive Braking Detection)
+        # =========================================================================
+        is_lead_braking_strict = False
+
+        if v_ego_kph <= 10.0:
+            # 階段一 (0~10 km/h)：極度敏感，前車微縮油門或稍有不穩 (-0.1) 立刻切斷加速
+            is_lead_braking_strict = lead.aLeadK < -0.1
+            
+        elif v_ego_kph <= 30.0:
+            # 階段二 (10~30 km/h)：高敏感，前車明確鬆開油門滑行 (-0.5) 立刻切斷加速
+            is_lead_braking_strict = lead.aLeadK < -0.5
+            
+        elif v_ego_kph <= 40.0:
+            # 階段三 (30~40 km/h)：中等敏感，前車有輕踩煞車動作 (-1.0) 才會切斷加速
+            is_lead_braking_strict = lead.aLeadK < -1.0
+            
+        elif v_ego_kph <= 50.0:
+            # 階段四 (40~50 km/h)：保守敏感，前車確實踩下煞車有減速感 (-1.25) 才會切斷微加速
+            is_lead_braking_strict = lead.aLeadK < -1.25
+
+        # -------------------------------------------------------------------------
         
         # [修正] 獨立計算當下給 Soft Hold 邏輯使用的 TTC，同樣改用相對速差
         closing_speed = max(v_ego - lead.vLead, 0.1)
         current_ttc = lead.dRel / closing_speed
         
-        # 車速 10 以下且前車正在煞車時，保持完全不加速的保守設定
-        if v_ego_kph <= 10.0 and is_lead_braking:
+        # [套用防線] 只要在 50 km/h 以下，且符合上述四階段嚴格判定條件，將 Soft Hold 允許加速度強制歸零
+        if v_ego_kph <= 50.0 and is_lead_braking_strict:
             current_soft_hold_accel = -0.00
 
         if self.current_pitch <= PITCH_UPHILL_THRESHOLD:
@@ -209,7 +234,9 @@ class ACM:
     return a_desired_trajectory
 
   def update_a_desired_trajectory(self, a_desired_trajectory, v_ego=0.0, lead=None, t_follow=None):
-    if getattr(self, '_dtsc_is_active', False):
+    # [修改] 如果 DTSC 啟用，或者「不是一般模式(acc)」，就不做任何介入，直接回傳原軌跡
+    if getattr(self, '_dtsc_is_active', False) or \
+       not getattr(self, '_is_normal_mode', True):
         return a_desired_trajectory
 
     traj = a_desired_trajectory
