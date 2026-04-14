@@ -175,14 +175,17 @@ class ACM:
 
     # 確保在前車存在的狀態下，才進行屬性讀取與計算
     if not should_cancel_soft_hold:
+        # 新增：前車速度極低 (小於 0.5 m/s，約 1.8 km/h) 視同靜止
+        is_lead_stopped = lead.vLead < 0.5  
+
         if v_ego_kph <= 10.0:
-            is_lead_braking_strict = lead.aLeadK < -0.1
+            is_lead_braking_strict = lead.aLeadK < -0.1 or is_lead_stopped
         elif v_ego_kph <= 30.0:
-            is_lead_braking_strict = lead.aLeadK < -0.5
+            is_lead_braking_strict = lead.aLeadK < -0.5 or is_lead_stopped
         elif v_ego_kph <= 40.0:
-            is_lead_braking_strict = lead.aLeadK < -1.0
+            is_lead_braking_strict = lead.aLeadK < -1.0 or is_lead_stopped
         elif v_ego_kph <= 50.0:
-            is_lead_braking_strict = lead.aLeadK < -1.25
+            is_lead_braking_strict = lead.aLeadK < -1.25 or is_lead_stopped
 
         closing_speed = max(v_ego - lead.vLead, 0.1)
         current_ttc = lead.dRel / closing_speed
@@ -209,13 +212,15 @@ class ACM:
         distance_factor = 1.0 
 
         if self.current_pitch <= PITCH_UPHILL_THRESHOLD:
-            if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX and current_ttc <= SOFT_HOLD_TTC_THRESHOLD:
+            # 移除下限：只要進入安全上限內且 TTC 危險，就算極近也要保持斷動力
+            if ratio < SOFT_HOLD_RANGE_MAX and current_ttc <= SOFT_HOLD_TTC_THRESHOLD:
                 distance_factor = 0.0
 
         v_rel_factor = np.interp(lead.vRel, [-2.0, 0.5], [0.0, 1.0])
         target_factor = max(distance_factor, v_rel_factor)
 
-        if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX:
+        # 移除下限：只要在安全上限以內，且前車靜止或急煞，就持續切斷動力讓車輛滑行減速
+        if ratio < SOFT_HOLD_RANGE_MAX:
             if v_ego_kph <= 50.0 and is_lead_braking_strict:
                 current_soft_hold_accel = 0.0
                 target_factor = 0.0 
