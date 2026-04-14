@@ -187,12 +187,8 @@ class ACM:
     is_lead_braking_strict = False
 
     if not should_cancel_soft_hold:
-        # [防幽靈前車機制] 取得視覺模型對該前車的信心度 (預設為 1.0 以防屬性不存在)
-        # 雷達雜訊通常 modelProb 很低 (< 0.5)
-        lead_prob = getattr(lead, 'modelProb', 1.0)
-        
-        # [優化點] 前車速度低於 3.6km/h (1.0m/s) 且視覺判定確實是車 (信心度 > 0.5) 時，才視同靜止、強制觸發動力切斷
-        is_lead_stopped = (lead.vLead < 1.0) and (lead_prob > 0.5)
+        # [優化點] 前車速度低於 3.6km/h (1.0m/s) 視同靜止、蠕行或即將煞停，強制觸發動力切斷
+        is_lead_stopped = lead.vLead < 1.0  
 
         # 速域動態判定：涵蓋全速域，包含高速公路的靜止車防追尾機制
         if v_ego_kph <= 10.0:
