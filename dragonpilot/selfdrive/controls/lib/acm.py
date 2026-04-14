@@ -187,17 +187,17 @@ class ACM:
     is_lead_braking_strict = False
 
     if not should_cancel_soft_hold:
-        # [優化點] 前車速度低於 3.6km/h (1.0m/s) 視同靜止或即將煞停，強制觸發動力切斷
+        # [優化點] 前車速度低於 3.6km/h (1.0m/s) 視同靜止、蠕行或即將煞停，強制觸發動力切斷
         is_lead_stopped = lead.vLead < 1.0  
 
-        # 速域動態判定：車速越低，對前車煞車的容忍度越低
+        # 速域動態判定：涵蓋全速域，包含高速公路的靜止車防追尾機制
         if v_ego_kph <= 10.0:
             is_lead_braking_strict = lead.aLeadK < -0.1 or is_lead_stopped
         elif v_ego_kph <= 30.0:
             is_lead_braking_strict = lead.aLeadK < -0.5 or is_lead_stopped
         elif v_ego_kph <= 40.0:
             is_lead_braking_strict = lead.aLeadK < -1.0 or is_lead_stopped
-        elif v_ego_kph <= 50.0:
+        else: # 涵蓋 40 km/h 以上的所有高速域 (解鎖 50km/h 限制)
             is_lead_braking_strict = lead.aLeadK < -1.25 or is_lead_stopped
 
         closing_speed = max(v_ego - lead.vLead, 0.1)
@@ -226,7 +226,7 @@ class ACM:
         distance_factor = 1.0 
 
         if self.current_pitch <= PITCH_UPHILL_THRESHOLD:
-            # [優化點] 移除下限限制 (原本為 0.76)，避免與 MPC 的 0.75 減速牆發生控制間隙
+            # [優化點] 移除下限限制，避免與 MPC 減速牆發生控制間隙
             # 只要進入上限 0.99 以內且 TTC 危險，即視為需要開始緩衝
             if ratio < SOFT_HOLD_RANGE_MAX and current_ttc <= SOFT_HOLD_TTC_THRESHOLD:
                 distance_factor = 0.0
@@ -237,7 +237,7 @@ class ACM:
 
         # 針對前車急煞或靜止的特殊壓制
         if ratio < SOFT_HOLD_RANGE_MAX:
-            if v_ego_kph <= 50.0 and is_lead_braking_strict:
+            if is_lead_braking_strict: # 全速域適用，遇靜止車即強制壓制動力
                 current_soft_hold_accel = 0.0
                 target_factor = 0.0 
 
