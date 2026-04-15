@@ -315,6 +315,14 @@ class LongitudinalMpc:
     x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
     self.source = MPC_SOURCES[np.argmin(x_obstacles[0])]
 
+    # =========================================================================
+    # 新增修正：如果雷達沒有抓到真實前車，強制將狀態設為巡航 (Cruise)
+    # 解決因為 DP 動態拉長 t_follow 導致誤判 50m 幽靈車為障礙物，使儀表板前車圖案常亮的問題
+    # =========================================================================
+    if not radarstate.leadOne.status:
+        self.source = LongitudinalPlanSource.cruise
+    # =========================================================================
+
     self.yref[:,:] = 0.0
     for i in range(N):
       self.solver.set(i, "yref", self.yref[i])
@@ -368,3 +376,4 @@ class LongitudinalMpc:
 if __name__ == "__main__":
   ocp = gen_long_ocp()
   AcadosOcpSolver.generate(ocp, json_file=JSON_FILE)
+
