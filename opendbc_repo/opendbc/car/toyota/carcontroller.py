@@ -212,7 +212,12 @@ class CarController(CarControllerBase):
     # handle UI messages
     fcw_alert = hud_control.visualAlert == VisualAlert.fcw
     steer_alert = hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw)
-    lead = hud_control.leadVisible or CS.out.vEgo < 12.  # at low speed we always assume the lead is present so ACC can be engaged
+    
+    # 判斷是否為 TSS2 車系，若是則只看真實雷達訊號 (leadVisible)，否則才套用低速假車邏輯
+    if self.CP.carFingerprint in TSS2_CAR:
+      lead = hud_control.leadVisible
+    else:
+      lead = hud_control.leadVisible or CS.out.vEgo < 12. 
 
     if self.CP.openpilotLongitudinalControl:
       if self.frame % 3 == 0:
