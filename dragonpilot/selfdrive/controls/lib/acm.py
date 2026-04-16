@@ -14,12 +14,12 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
 # =========================================================
 
 # --- 滑行速度容許範圍 ---
-SPEED_OFFSET_MIN_KPH = 1.0             
+SPEED_OFFSET_MIN_KPH = 0.0             # [修改點] 設為 0.0，移除下限偏移
 SPEED_OFFSET_MAX_FLAT_KPH = 15.0       
 SPEED_OFFSET_MAX_DOWNHILL_KPH = 5.0    
 
 # --- 坡度判斷門檻 ---
-PITCH_UPHILL_THRESHOLD = 0.05         
+PITCH_UPHILL_THRESHOLD = 0.050         # 維持 5.0% 坡度門檻
 PITCH_DOWNHILL_THRESHOLD = -0.030      
 
 # --- TTC (Time To Collision) 碰撞時間設定 ---
@@ -37,7 +37,7 @@ SPEED_BP = [0., 10., 20., 30.]
 MIN_DIST_V = [5., 10., 15., 20.]       
 
 # --- Soft Hold (柔和跟車/滑行介入) 設定 ---
-SOFT_HOLD_RANGE_MIN = 0.70             # [優化點] 改為 0.70，完美覆蓋 MPC 0.75 減速牆，達成無縫交接煞車
+SOFT_HOLD_RANGE_MIN = 0.70             
 SOFT_HOLD_RANGE_MAX = 0.99             
 SOFT_HOLD_TTC_THRESHOLD = 2.5          
 
@@ -117,9 +117,9 @@ class ACM:
     else:
         self.current_max_offset = SPEED_OFFSET_MAX_FLAT_KPH
 
-    lower_bound = v_cruise - (SPEED_OFFSET_MIN_KPH / 3.6)
+    # [修改點] 移除 lower_bound 的偏移判斷，直接以 v_cruise 作為基準
     upper_bound = v_cruise + (self.current_max_offset / 3.6)
-    self._is_in_coast_window = lower_bound < v_ego < upper_bound
+    self._is_in_coast_window = v_ego >= v_cruise and v_ego < upper_bound
 
     return (not user_ctrl_lon and     
             not self._has_lead and    
@@ -158,33 +158,28 @@ class ACM:
     self._active_prev = self.active
 
   def _apply_soft_hold(self, a_desired_trajectory, v_ego, lead, t_follow):
-    # =========================================================================
-    # 1. 狀態標記與判定
-    # =========================================================================
     should_cancel_soft_hold = False
     
     if lead is None or not lead.status or lead.dRel > 100.0:
         should_cancel_soft_hold = True
 
     target_factor = 1.0   
-    ratio = 10.0  # 防呆確保安全宣告
+    ratio = 10.0  
     v_ego_kph = v_ego * 3.6
     current_soft_hold_accel = np.interp(v_ego_kph, SOFT_HOLD_SPEED_BP, SOFT_HOLD_ACCEL_V)
 
     is_lead_braking_strict = False
 
     if not should_cancel_soft_hold:
-        # [優化點] 前車速度低於 3.6km/h (1.0m/s) 視同靜止
         is_lead_stopped = lead.vLead < 1.0  
 
-        # 速域動態判定：涵蓋全速域
         if v_ego_kph <= 10.0:
             is_lead_braking_strict = lead.aLeadK < -0.1 or is_lead_stopped
         elif v_ego_kph <= 30.0:
             is_lead_braking_strict = lead.aLeadK < -0.5 or is_lead_stopped
         elif v_ego_kph <= 40.0:
             is_lead_braking_strict = lead.aLeadK < -1.0 or is_lead_stopped
-        else: # [優化點] 解鎖所有大於 40 km/h 的高速域
+        else: 
             is_lead_braking_strict = lead.aLeadK < -1.25 or is_lead_stopped
 
         closing_speed = max(v_ego - lead.vLead, 0.1)
@@ -201,9 +196,6 @@ class ACM:
         if ratio > 1.2:
             should_cancel_soft_hold = True
 
-    # =========================================================================
-    # 2. 核心控制因數計算
-    # =========================================================================
     if should_cancel_soft_hold:
         target_factor = 1.0
         alpha = 0.40  
@@ -211,7 +203,6 @@ class ACM:
         distance_factor = 1.0 
 
         if self.current_pitch <= PITCH_UPHILL_THRESHOLD:
-            # [優化點] 在 0.70 到 0.99 之間且 TTC 危險時觸發
             if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX and current_ttc <= SOFT_HOLD_TTC_THRESHOLD:
                 distance_factor = 0.0
 
@@ -219,19 +210,21 @@ class ACM:
         target_factor = max(distance_factor, v_rel_factor)
 
         if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX:
-            if is_lead_braking_strict: # 全速域適用，遇靜止車即強制壓制動力
-                current_soft_hold_accel = 0.0
-                target_factor = 0.0 
+            if is_lead_braking_strict:
+                if self.current_pitch > PITCH_UPHILL_THRESHOLD:
+                    target_factor = 0.7  
+                    current_soft_hold_accel = current_soft_hold_accel * 0.7 
+                else:
+                    current_soft_hold_accel = 0.0
+                    target_factor = 0.0 
 
         if target_factor > self._soft_hold_factor:
             alpha = 0.10 
         else:
             alpha = 0.20 
 
-    # 3. 執行 EMA 平滑過濾
     self._soft_hold_factor = (1.0 - alpha) * self._soft_hold_factor + alpha * target_factor
 
-    # 4. 輸出最終軌跡加速度
     if self._soft_hold_factor < 0.99:
         dynamic_limit = np.maximum(a_desired_trajectory, 0.0) * self._soft_hold_factor + current_soft_hold_accel * (1.0 - self._soft_hold_factor)
         a_desired_trajectory = np.minimum(a_desired_trajectory, dynamic_limit)
