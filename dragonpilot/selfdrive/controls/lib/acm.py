@@ -14,13 +14,17 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
 # =========================================================
 
 # --- 滑行速度容許範圍 ---
-SPEED_OFFSET_MIN_KPH = 0.0             # [修改點] 設為 0.0，移除下限偏移
+SPEED_OFFSET_MIN_KPH = 0.0             # 設為 0.0，移除下限偏移
 SPEED_OFFSET_MAX_FLAT_KPH = 15.0       
 SPEED_OFFSET_MAX_DOWNHILL_KPH = 5.0    
 
-# --- 坡度判斷門檻 ---
-PITCH_UPHILL_THRESHOLD = 0.050         # 維持 5.0% 坡度門檻
+# --- 坡度判斷門檻 (ACM 整體滑行功能用) ---
+PITCH_UPHILL_THRESHOLD = 0.050         # 超過 5.0% 坡度，ACM 滑行功能不啟動
 PITCH_DOWNHILL_THRESHOLD = -0.030      
+
+# --- 坡度判斷門檻 (Soft Hold 動力保留專用) ---
+SOFT_HOLD_PITCH_START = 0.050          # 5.0%：開始平滑介入，動力從 0% 起步
+SOFT_HOLD_PITCH_MAX = 0.080            # 8.0%：平滑到達 100% 動力，超過則全交給 MPC 處理
 
 # --- TTC (Time To Collision) 碰撞時間設定 ---
 TTC_BP = [10., 30.]                    
@@ -108,6 +112,8 @@ class ACM:
     if dtsc_is_active: 
         self._is_in_coast_window = False
         return False
+        
+    # 坡度大於 5% 時，拒絕啟動/關閉 ACM 滑行
     if pitch > PITCH_UPHILL_THRESHOLD: 
         self._is_in_coast_window = False
         return False
@@ -117,7 +123,7 @@ class ACM:
     else:
         self.current_max_offset = SPEED_OFFSET_MAX_FLAT_KPH
 
-    # [修改點] 移除 lower_bound 的偏移判斷，直接以 v_cruise 作為基準
+    # 移除 lower_bound 的偏移判斷，直接以 v_cruise 作為基準
     upper_bound = v_cruise + (self.current_max_offset / 3.6)
     self._is_in_coast_window = v_ego >= v_cruise and v_ego < upper_bound
 
@@ -160,8 +166,26 @@ class ACM:
   def _apply_soft_hold(self, a_desired_trajectory, v_ego, lead, t_follow):
     should_cancel_soft_hold = False
     
-    if lead is None or not lead.status or lead.dRel > 100.0:
+    # 取得原廠 MPC 當前規劃的最大加速意圖
+    mpc_max_accel_intent = np.max(a_desired_trajectory)
+    
+    # 判斷是否有前車，且前車狀態正常
+    has_valid_lead = lead is not None and lead.status and lead.dRel <= 100.0
+
+    if not has_valid_lead:
+        # 無前車或前車太遠，解除 Soft Hold
         should_cancel_soft_hold = True
+    else:
+        # --- Soft Hold 條件解除判定區 (雙管齊下完美版) ---
+        # 條件 1: 相對速度判定 (前車起步，下調至 1.0 m/s 防市區插隊)
+        if lead.vRel > 1.0:
+            should_cancel_soft_hold = True
+        # 條件 2: 坡度判定 (超過 8% 直接退回給原廠 MPC 處理)
+        elif self.current_pitch > SOFT_HOLD_PITCH_MAX:
+            should_cancel_soft_hold = True
+        # 條件 3: MPC 意圖判定 (防國道緩坡掉速，強烈需要動力，大於 0.4 m/s²)
+        elif mpc_max_accel_intent > 0.4:
+            should_cancel_soft_hold = True
 
     target_factor = 1.0   
     ratio = 10.0  
@@ -202,7 +226,8 @@ class ACM:
     else:
         distance_factor = 1.0 
 
-        if self.current_pitch <= PITCH_UPHILL_THRESHOLD:
+        # 只要坡度沒有到達需要 100% 退讓的程度，就正常計算距離係數
+        if self.current_pitch <= SOFT_HOLD_PITCH_MAX:
             if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX and current_ttc <= SOFT_HOLD_TTC_THRESHOLD:
                 distance_factor = 0.0
 
@@ -211,10 +236,19 @@ class ACM:
 
         if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX:
             if is_lead_braking_strict:
-                if self.current_pitch > PITCH_UPHILL_THRESHOLD:
-                    target_factor = 0.7  
-                    current_soft_hold_accel = current_soft_hold_accel * 0.7 
+                
+                # =========================================================
+                # 單純平滑過渡 (Linear Interpolation) 邏輯：5% ~ 8%
+                # =========================================================
+                if self.current_pitch > SOFT_HOLD_PITCH_START:
+                    # [平滑段] 5% ~ 8%：從 0% 平滑拉升到 100% 動力
+                    smooth_factor = float(np.interp(self.current_pitch, 
+                                                    [SOFT_HOLD_PITCH_START, SOFT_HOLD_PITCH_MAX], 
+                                                    [0.0, 1.0]))
+                    target_factor = smooth_factor  
+                    current_soft_hold_accel = current_soft_hold_accel * smooth_factor 
                 else:
+                    # [平地與微坡] 小於等於 5%，執行常規的 Soft Hold 煞停邏輯 (0% 動力)
                     current_soft_hold_accel = 0.0
                     target_factor = 0.0 
 
@@ -225,6 +259,7 @@ class ACM:
 
     self._soft_hold_factor = (1.0 - alpha) * self._soft_hold_factor + alpha * target_factor
 
+    # 確保 Soft Hold 僅作為加速天花板，絕不阻擋原廠 MPC 的煞車意圖
     if self._soft_hold_factor < 0.99:
         dynamic_limit = np.maximum(a_desired_trajectory, 0.0) * self._soft_hold_factor + current_soft_hold_accel * (1.0 - self._soft_hold_factor)
         a_desired_trajectory = np.minimum(a_desired_trajectory, dynamic_limit)
