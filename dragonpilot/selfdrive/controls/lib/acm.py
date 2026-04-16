@@ -18,7 +18,8 @@ SPEED_OFFSET_MIN_KPH = 0.0             # 設為 0.0，移除下限偏移
 SPEED_OFFSET_MAX_FLAT_KPH = 15.0       
 SPEED_OFFSET_MAX_DOWNHILL_KPH = 5.0    
 
-# --- 坡度判斷門檻 (ACM 整體滑行功能用) ---
+# --- 坡度訊號與判斷門檻 ---
+PITCH_SMOOTH_ALPHA = 0.10              # [新增] 坡度平滑係數 (0~1)，越低越平滑，濾除坑洞與伸縮縫雜訊
 PITCH_UPHILL_THRESHOLD = 0.050         # 超過 5.0% 坡度，ACM 滑行功能不啟動
 PITCH_DOWNHILL_THRESHOLD = -0.030      
 
@@ -44,6 +45,7 @@ MIN_DIST_V = [5., 10., 15., 20.]
 SOFT_HOLD_RANGE_MIN = 0.70             
 SOFT_HOLD_RANGE_MAX = 0.99             
 SOFT_HOLD_TTC_THRESHOLD = 2.5          
+VREL_DEBOUNCE_TIME = 0.6               # [新增] 防插隊暴衝計時器 (秒)，濾除市區機車鑽車縫的瞬間 vRel 突波
 
 # 車速 (km/h) 對應 最高加速度限制 (m/s²) 的插值陣列
 SOFT_HOLD_SPEED_BP = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0]
@@ -61,9 +63,16 @@ class ACM:
     self.active = False                   
     self.just_disabled = False            
 
-    self.current_ttc_threshold = 3.0      
+    # [修改] 坡度平滑相關變數
     self.current_pitch = 0.0              
+    self._is_first_pitch = True           
+
+    # [修改] 防插隊暴衝相關變數
+    self._vrel_high_start_time = 0.0      
+    self._vrel_high_active = False        
+
     self.current_max_offset = 0.0         
+    self.current_ttc_threshold = 3.0      
 
     self.personality = log.LongitudinalPersonality.standard 
     self._dtsc_is_active = False          
@@ -123,7 +132,6 @@ class ACM:
     else:
         self.current_max_offset = SPEED_OFFSET_MAX_FLAT_KPH
 
-    # 移除 lower_bound 的偏移判斷，直接以 v_cruise 作為基準
     upper_bound = v_cruise + (self.current_max_offset / 3.6)
     self._is_in_coast_window = v_ego >= v_cruise and v_ego < upper_bound
 
@@ -141,7 +149,14 @@ class ACM:
       self.active = False
       return
 
-    self.current_pitch = cc.orientationNED[1] 
+    # [修改] 坡度平滑處理 (EMA 濾波) - 濾除路面坑洞或伸縮縫造成的瞬間跳動
+    new_pitch = cc.orientationNED[1]
+    if self._is_first_pitch:
+        self.current_pitch = new_pitch
+        self._is_first_pitch = False
+    else:
+        self.current_pitch = PITCH_SMOOTH_ALPHA * new_pitch + (1.0 - PITCH_SMOOTH_ALPHA) * self.current_pitch
+
     current_time = time.monotonic()
     lead = rs.leadOne
 
@@ -165,24 +180,32 @@ class ACM:
 
   def _apply_soft_hold(self, a_desired_trajectory, v_ego, lead, t_follow):
     should_cancel_soft_hold = False
+    current_time = time.monotonic()
     
-    # 取得原廠 MPC 當前規劃的最大加速意圖
     mpc_max_accel_intent = np.max(a_desired_trajectory)
-    
-    # 判斷是否有前車，且前車狀態正常
     has_valid_lead = lead is not None and lead.status and lead.dRel <= 100.0
 
     if not has_valid_lead:
-        # 無前車或前車太遠，解除 Soft Hold
+        # 無前車或前車太遠，解除 Soft Hold 並重置計時器
         should_cancel_soft_hold = True
+        self._vrel_high_active = False
     else:
-        # --- Soft Hold 條件解除判定區 (雙管齊下完美版) ---
-        # 條件 1: 相對速度判定 (前車起步，下調至 1.0 m/s 防市區插隊)
+        # --- Soft Hold 條件解除判定區 (加入防插隊與坡度平滑完美版) ---
+        
+        # 條件 1: 相對速度判定 (加入 Debounce 計時器防機車插隊突波)
         if lead.vRel > 1.0:
-            should_cancel_soft_hold = True
+            if not self._vrel_high_active:
+                self._vrel_high_active = True
+                self._vrel_high_start_time = current_time
+            elif (current_time - self._vrel_high_start_time) > VREL_DEBOUNCE_TIME:
+                should_cancel_soft_hold = True
+        else:
+            self._vrel_high_active = False
+            
         # 條件 2: 坡度判定 (超過 8% 直接退回給原廠 MPC 處理)
-        elif self.current_pitch > SOFT_HOLD_PITCH_MAX:
+        if self.current_pitch > SOFT_HOLD_PITCH_MAX:
             should_cancel_soft_hold = True
+            
         # 條件 3: MPC 意圖判定 (防國道緩坡掉速，強烈需要動力，大於 0.4 m/s²)
         elif mpc_max_accel_intent > 0.4:
             should_cancel_soft_hold = True
