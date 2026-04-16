@@ -219,9 +219,17 @@ class ACM:
         target_factor = max(distance_factor, v_rel_factor)
 
         if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX:
-            if is_lead_braking_strict: # 全速域適用，遇靜止車即強制壓制動力
-                current_soft_hold_accel = 0.0
-                target_factor = 0.0 
+            if is_lead_braking_strict:
+                # [修正點] 加入上坡判斷，防止上坡幽靈車或急煞導致瞬間失去動力
+                if self.current_pitch > PITCH_UPHILL_THRESHOLD:
+                    # 遇到幽靈車或急煞車時，保留 0.7 (70%) 的 target_factor 緩衝
+                    # 大幅減輕上坡瞬間失去動力造成的危險頓挫
+                    target_factor = 0.7  
+                    current_soft_hold_accel = current_soft_hold_accel * 0.7 
+                else:
+                    # 平地或下坡維持原本的強力壓制
+                    current_soft_hold_accel = 0.0
+                    target_factor = 0.0 
 
         if target_factor > self._soft_hold_factor:
             alpha = 0.10 
