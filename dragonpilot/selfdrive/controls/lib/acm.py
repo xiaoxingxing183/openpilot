@@ -171,51 +171,59 @@ class SoftHoldLogic:
     self._vrel_high_active = False        # 標記前車是否正在快速遠離
 
   def process_trajectory(self, a_desired_trajectory, v_ego, lead, current_pitch, t_follow):
-    """處理柔和跟車邏輯：市區蠕行防插隊，平滑起步與煞停"""
-    should_cancel_soft_hold = False
+    """處理柔和跟車邏輯：接近前車時維持速度表限制，低速有動力高速滑行"""
     current_time = time.monotonic()
-    mpc_max_accel_intent = np.max(a_desired_trajectory)
+    v_ego_kph = v_ego * 3.6
     
     # 判斷是否有效前車且距離小於 100 公尺
     has_valid_lead = lead is not None and lead.status and lead.dRel <= 100.0
+    
+    # 根據車速查表得到最大允許加速度
+    current_soft_hold_accel = np.interp(v_ego_kph, SOFT_HOLD_SPEED_BP, SOFT_HOLD_ACCEL_V)
 
-    # 狀態機 1：判斷是否需要強制取消柔和跟車
+    # ============ 判斷是否應該取消柔和跟車 ============
+    should_cancel_soft_hold = False
+    
     if not has_valid_lead:
         should_cancel_soft_hold = True
         self._vrel_high_active = False
     else:
-        # vRel > 1.0 代表前車以大於 1m/s (3.6km/h) 的速度遠離我們
+        # 前車快速遠離時的防抖邏輯
         if lead.vRel > 1.0:
             if not self._vrel_high_active:
                 self._vrel_high_active = True
                 self._vrel_high_start_time = current_time
-            # 如果前車持續遠離超過 VREL_DEBOUNCE_TIME (0.6秒)，取消 Soft Hold 讓原廠加速跟上
             elif (current_time - self._vrel_high_start_time) > VREL_DEBOUNCE_TIME:
                 should_cancel_soft_hold = True
         else:
             self._vrel_high_active = False
             
-        # 遇到較陡的上坡，或者原廠 MPC 打算強烈加速 (>0.4 m/s²) 時，取消介入
-        if current_pitch > SOFT_HOLD_PITCH_MAX:
-            should_cancel_soft_hold = True
-        elif mpc_max_accel_intent > 0.4:
+        # 陡坡或強加速時取消介入
+        mpc_max_accel_intent = np.max(a_desired_trajectory)
+        if current_pitch > SOFT_HOLD_PITCH_MAX or mpc_max_accel_intent > 0.4:
             should_cancel_soft_hold = True
 
-    target_factor = 1.0   # 目標動力係數 (預設為不介入)
-    ratio = 10.0          # 距離比例
-    v_ego_kph = v_ego * 3.6
+    # ============ 計算與前車的距離關係 ============
+    ratio = 10.0
+    current_ttc = 10.0
+    is_approaching_lead = False
     
-    # 根據當下車速，查表得到最大允許加速度 (這就是高速被切為0的元凶)
-    current_soft_hold_accel = np.interp(v_ego_kph, SOFT_HOLD_SPEED_BP, SOFT_HOLD_ACCEL_V)
+    if has_valid_lead and not should_cancel_soft_hold:
+        closing_speed = max(v_ego - lead.vLead, 0.1)
+        current_ttc = lead.dRel / closing_speed
+        desired_dist = get_safe_obstacle_distance(v_ego, t_follow)
+        lead_obstacle_dist = lead.dRel + get_stopped_equivalence_factor(lead.vLead)
+        ratio = 10.0 if desired_dist < 0.1 else (lead_obstacle_dist / desired_dist)
+        
+        # 判斷是否接近前車：距離在安全範圍內，TTC 較短
+        is_approaching_lead = (SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX and 
+                              current_ttc <= SOFT_HOLD_TTC_THRESHOLD)
+
+    # ============ 判斷前車是否在煞車 ============
     is_lead_braking_strict = False
-
-    # 狀態機 2：如果沒有被強制取消，則精細計算是否要限制動力
-    if not should_cancel_soft_hold:
-        # [修正] 市區塞車防插隊蠕行邏輯：前車低於 3.6km/h，且沒有正在遠離我們 (>0.3 m/s) 才算真的停止
-        is_lead_stopped = (lead.vLead < 1.0) and (lead.vRel <= 0.3)  
-
-        # [修正] 放寬嚴格煞車判定：如果前車正在緩慢蠕行遠離 (vRel > 0.5)，就不視為嚴格煞車，允許車輛跟上
-        # 依照不同車速區段，賦予不同的前車煞車判定門檻 (aLeadK 是前車加速度，負值代表煞車)
+    if has_valid_lead:
+        is_lead_stopped = (lead.vLead < 1.0) and (lead.vRel <= 0.3)
+        
         if v_ego_kph <= 10.0:
             is_lead_braking_strict = (lead.aLeadK < -0.1 or is_lead_stopped) and (lead.vRel < 0.5)
         elif v_ego_kph <= 30.0:
@@ -225,61 +233,30 @@ class SoftHoldLogic:
         else: 
             is_lead_braking_strict = lead.aLeadK < -1.25 or is_lead_stopped
 
-        # 計算 TTC 和 預期安全距離
-        closing_speed = max(v_ego - lead.vLead, 0.1)
-        current_ttc = lead.dRel / closing_speed
-        desired_dist = get_safe_obstacle_distance(v_ego, t_follow)
-        # 前車實際距離 + 前車停止等效因子
-        lead_obstacle_dist = lead.dRel + get_stopped_equivalence_factor(lead.vLead)
-
-        # 距離比例 ratio = 實際距離 / 期望安全距離
-        ratio = 10.0 if desired_dist < 0.1 else (lead_obstacle_dist / desired_dist)
-        # 如果實際距離比預期安全距離還大 20% (距離夠遠)，取消介入
-        if ratio > 1.2:
-            should_cancel_soft_hold = True
-
-    # 根據前面收集到的資訊，結算 target_factor (目標動力係數)
-    if should_cancel_soft_hold:
-        target_factor = 1.0 # 恢復 100% 動力
-        alpha = 0.40        # 恢復速度較快 (濾波係數大)
-    else:
-        distance_factor = 1.0 
-        if current_pitch <= SOFT_HOLD_PITCH_MAX:
-            # 如果跟車距離在目標範圍內，且 TTC 小於 2.5 秒，則將距離動力係數設為 0
-            if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX and current_ttc <= SOFT_HOLD_TTC_THRESHOLD:
-                distance_factor = 0.0
-
-        # 將相對速度映射到 0~1 的係數，前車靠近得越快(-2.0)，v_rel_factor 越趨近於 0
-        v_rel_factor = np.interp(lead.vRel, [-2.0, 0.5], [0.0, 1.0])
-        # 取距離和速度兩者中最保守(最大)的值
-        target_factor = max(distance_factor, v_rel_factor)
-
-        # 特別處理：如果前車正在嚴格煞車，且距離適中
-        if SOFT_HOLD_RANGE_MIN < ratio < SOFT_HOLD_RANGE_MAX and is_lead_braking_strict:
-            if current_pitch > SOFT_HOLD_PITCH_START:
-                # 遇到微微上坡，根據坡度平滑保留部分動力，避免溜車
-                smooth_factor = float(np.interp(current_pitch, [SOFT_HOLD_PITCH_START, SOFT_HOLD_PITCH_MAX], [0.0, 1.0]))
-                target_factor = smooth_factor  
-                current_soft_hold_accel = current_soft_hold_accel * smooth_factor 
-            else:
-                # 平地或下坡，直接切斷動力，準備煞車
-                current_soft_hold_accel = 0.0
-                target_factor = 0.0 
-
-        # 進入柔和跟車的速度較慢(alpha=0.10)，退出恢復動力的速度較快(alpha=0.20)
-        alpha = 0.10 if target_factor > self._soft_hold_factor else 0.20 
-
-    # 套用指數移動平均 (EMA) 使動力變化平滑，不突兀
-    self._soft_hold_factor = (1.0 - alpha) * self._soft_hold_factor + alpha * target_factor
-
-    # 最終套用到油門/煞車軌跡上
+    # ============ 應用加速度限制 ============
     traj = np.copy(a_desired_trajectory)
-    # 只要 factor 小於 0.99，代表開始介入限制動力
-    if self._soft_hold_factor < 0.99:
-        # 原廠正加速度 * 限制係數 + 自定義最大允許加速度 * (1 - 限制係數)
-        dynamic_limit = np.maximum(traj, 0.0) * self._soft_hold_factor + current_soft_hold_accel * (1.0 - self._soft_hold_factor)
-        # 用 np.minimum 限制最終輸出的加速度
-        traj = np.minimum(traj, dynamic_limit)
+    
+    if should_cancel_soft_hold:
+        # 完全取消介入，使用原廠軌跡
+        pass
+    elif is_approaching_lead:
+        # 【核心邏輯】接近前車時：直接用速度表中的 current_soft_hold_accel 限制加速度
+        # 這樣自動實現：低速有動力，高速滑行
+        
+        accel_limit = current_soft_hold_accel
+        
+        # 如果前車在煞車，進一步限制
+        if is_lead_braking_strict:
+            if current_pitch > SOFT_HOLD_PITCH_START:
+                # 上坡時保留部分動力避免溜車
+                smooth_factor = float(np.interp(current_pitch, [SOFT_HOLD_PITCH_START, SOFT_HOLD_PITCH_MAX], [0.0, 1.0]))
+                accel_limit = accel_limit * smooth_factor
+            else:
+                # 平地或下坡時進一步限制
+                accel_limit = accel_limit * 0.5
+        
+        # 只限制正加速度部分
+        traj = np.minimum(traj, accel_limit)
 
     return traj
 
