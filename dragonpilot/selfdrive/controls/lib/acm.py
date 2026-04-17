@@ -176,8 +176,8 @@ class SoftHoldLogic:
     current_time = time.monotonic()
     mpc_max_accel_intent = np.max(a_desired_trajectory)
     
-    # 判斷是否有效前車且距離小於 100 公尺
-    has_valid_lead = lead is not None and lead.status and lead.dRel <= 100.0
+    # 判斷是否有效前車
+    has_valid_lead = lead is not None and lead.status
 
     # 狀態機 1：判斷是否需要強制取消柔和跟車
     if not has_valid_lead:
