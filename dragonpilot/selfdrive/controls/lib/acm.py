@@ -15,7 +15,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
 # =========================================================
 
 # --- 滑行速度容許範圍 ---
-SPEED_OFFSET_MIN_KPH = 0.0             # 允許滑行的最低速度偏差
+SPEED_OFFSET_MIN_KPH = 1.0             # 允許滑行的最低速度偏差
 SPEED_OFFSET_MAX_FLAT_KPH = 15.0       # 平地時，允許超過設定定速的最大滑行速度 (例如定速100，最高允許滑行到115才強制煞車)
 SPEED_OFFSET_MAX_DOWNHILL_KPH = 5.0    # 下坡時，允許超過設定定速的最大滑行速度 (下坡較危險，容忍度較小)
 
