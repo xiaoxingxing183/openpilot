@@ -169,6 +169,11 @@ class SoftHoldLogic:
     self._soft_hold_factor = 1.0          # 動力輸出係數 (1.0=100%原廠動力，0.0=切斷動力/踩煞車)
     self._vrel_high_start_time = 0.0      # 記錄前車快速遠離的開始時間
     self._vrel_high_active = False        # 標記前車是否正在快速遠離
+    
+    # [新增] 狀態記憶：用於 0.5 秒雷達防閃爍寬限期
+    self._last_lead_time = 0.0            
+    self._last_target_factor = 1.0
+    self._last_soft_hold_accel = 0.0
 
   def process_trajectory(self, a_desired_trajectory, v_ego, lead, current_pitch, t_follow):
     """處理柔和跟車邏輯：市區蠕行防插隊，平滑起步與煞停"""
@@ -179,11 +184,37 @@ class SoftHoldLogic:
     # 判斷是否有效前車
     has_valid_lead = lead is not None and lead.status
 
-    # 狀態機 1：判斷是否需要強制取消柔和跟車
+    target_factor = 1.0   # 目標動力係數 (預設為不介入)
+    v_ego_kph = v_ego * 3.6
+    
+    # 根據當下車速，查表得到最大允許加速度 (這就是高速被切為0的元凶)
+    current_soft_hold_accel = np.interp(v_ego_kph, SOFT_HOLD_SPEED_BP, SOFT_HOLD_ACCEL_V)
+    is_lead_braking_strict = False
+    skip_state_2 = False
+
+    # [修改] 狀態機 1：判斷是否需要強制取消柔和跟車，並整合雷達寬限期
     if not has_valid_lead:
-        should_cancel_soft_hold = True
         self._vrel_high_active = False
+        # 雷達消失，但處於 0.5 秒寬限期內
+        if (current_time - self._last_lead_time) < 0.5:
+            # 檢查之前狀態：是純滑行(>=0)還是正在煞車(<0)
+            if self._last_soft_hold_accel >= 0.0:
+                # 之前是滑行，凍結並沿用上一幀的狀態
+                target_factor = self._last_target_factor
+                current_soft_hold_accel = self._last_soft_hold_accel
+            else:
+                # 之前正在微煞車，但雷達看不見了：立即鬆開煞車，改為輸出 0.0 純滑行
+                target_factor = 0.0
+                current_soft_hold_accel = 0.0
+                
+            should_cancel_soft_hold = False
+            skip_state_2 = True # 凍結狀態，略過後續需要 lead 變數的計算
+        else:
+            should_cancel_soft_hold = True
+            skip_state_2 = True
     else:
+        self._last_lead_time = current_time # 正常抓到前車，更新時間點
+        
         # vRel > 1.0 代表前車以大於 1m/s (3.6km/h) 的速度遠離我們
         if lead.vRel > 1.0:
             if not self._vrel_high_active:
@@ -201,16 +232,10 @@ class SoftHoldLogic:
         elif mpc_max_accel_intent > 0.4:
             should_cancel_soft_hold = True
 
-    target_factor = 1.0   # 目標動力係數 (預設為不介入)
     ratio = 10.0          # 距離比例
-    v_ego_kph = v_ego * 3.6
-    
-    # 根據當下車速，查表得到最大允許加速度 (這就是高速被切為0的元凶)
-    current_soft_hold_accel = np.interp(v_ego_kph, SOFT_HOLD_SPEED_BP, SOFT_HOLD_ACCEL_V)
-    is_lead_braking_strict = False
 
-    # 狀態機 2：如果沒有被強制取消，則精細計算是否要限制動力
-    if not should_cancel_soft_hold:
+    # 狀態機 2：如果沒有被強制取消，且不在雷達寬限凍結期，則精細計算
+    if not should_cancel_soft_hold and not skip_state_2:
         # [修正] 市區塞車防插隊蠕行邏輯：前車低於 3.6km/h，且沒有正在遠離我們 (>0.3 m/s) 才算真的停止
         is_lead_stopped = (lead.vLead < 1.0) and (lead.vRel <= 0.3)  
 
@@ -242,7 +267,7 @@ class SoftHoldLogic:
     if should_cancel_soft_hold:
         target_factor = 1.0 # 恢復 100% 動力
         alpha = 0.40        # 恢復速度較快 (濾波係數大)
-    else:
+    elif not skip_state_2:
         distance_factor = 1.0 
         if current_pitch <= SOFT_HOLD_PITCH_MAX:
             # 如果跟車距離在目標範圍內，且 TTC 小於 2.5 秒，則將距離動力係數設為 0
@@ -268,6 +293,13 @@ class SoftHoldLogic:
 
         # 進入柔和跟車的速度較慢(alpha=0.10)，退出恢復動力的速度較快(alpha=0.20)
         alpha = 0.10 if target_factor > self._soft_hold_factor else 0.20 
+    else:
+        # 雷達寬限期內，保持平滑過渡
+        alpha = 0.10 if target_factor > self._soft_hold_factor else 0.20 
+
+    # 記錄當前結果供下一幀備用
+    self._last_target_factor = target_factor
+    self._last_soft_hold_accel = current_soft_hold_accel
 
     # 套用指數移動平均 (EMA) 使動力變化平滑，不突兀
     self._soft_hold_factor = (1.0 - alpha) * self._soft_hold_factor + alpha * target_factor
