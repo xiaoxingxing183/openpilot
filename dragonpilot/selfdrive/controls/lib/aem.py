@@ -107,7 +107,7 @@ class AEM:
       self._perform_experimental_mode(AEM_COOLDOWN_LANE)
 
     # =========================================================
-    # Stop sign/light detection (台灣市區闖燈刺客防護版)
+    # Stop sign/light detection (台灣市區闖燈刺客防護版 + 閘道大彎道豁免)
     # =========================================================
     if len(model_msg.orientation.x) == len(model_msg.position.x) == ModelConstants.IDX_N:
       
@@ -117,20 +117,30 @@ class AEM:
       # 模型預測需要煞車 (路徑被截斷)
       if model_end_x < expected_stop_dist:
         
-        has_lead = radar_msg.leadOne.status
-        lead_dist = radar_msg.leadOne.dRel if has_lead else 999.0
-        v_rel = radar_msg.leadOne.vRel if has_lead else 0.0
-        v_lead = radar_msg.leadOne.vLead if has_lead else 0.0
+        # 💡 --- 新增：大彎道 (閘道) 豁免邏輯 ---
+        # 取得模型預測終點的左右偏移量 (取絕對值)
+        curve_y_offset = abs(model_msg.position.y[ModelConstants.IDX_N - 1])
         
-        # 🛡️ 基礎動態緩衝：前車已經完全離開 (距離拉得很遠)
-        dynamic_buffer = max(8.0, v_ego * 0.3)
+        # 設定閾值：路徑短於 20m，且左右偏移大於 2.5m (模擬交流道大彎曲率)
+        is_sharp_ramp_curve = (model_end_x < 20.0) and (curve_y_offset > 2.5)
+        # ------------------------------------
         
-        # 🚨 闖燈刺客偵測 (Runner Detection)
-        is_runner = has_lead and (v_lead > 5.5) and (v_rel > -0.5) and (lead_dist > model_end_x + 4.0)
-        
-        # 觸發條件：沒車 / 前車跑遠了 / 判定前車正在闖紅燈！
-        if not has_lead or (lead_dist > model_end_x + dynamic_buffer) or is_runner:
-            self._perform_experimental_mode(AEM_COOLDOWN_STOP)
+        # 只有在「不是閘道大彎道」的情況下，才繼續進行 AEM 觸發判斷
+        if not is_sharp_ramp_curve:
+            has_lead = radar_msg.leadOne.status
+            lead_dist = radar_msg.leadOne.dRel if has_lead else 999.0
+            v_rel = radar_msg.leadOne.vRel if has_lead else 0.0
+            v_lead = radar_msg.leadOne.vLead if has_lead else 0.0
+            
+            # 🛡️ 基礎動態緩衝：前車已經完全離開 (距離拉得很遠)
+            dynamic_buffer = max(8.0, v_ego * 0.3)
+            
+            # 🚨 闖燈刺客偵測 (Runner Detection)
+            is_runner = has_lead and (v_lead > 5.5) and (v_rel > -0.5) and (lead_dist > model_end_x + 4.0)
+            
+            # 觸發條件：沒車 / 前車跑遠了 / 判定前車正在闖紅燈！
+            if not has_lead or (lead_dist > model_end_x + dynamic_buffer) or is_runner:
+                self._perform_experimental_mode(AEM_COOLDOWN_STOP)
     # =========================================================
 
     # Green light resume
