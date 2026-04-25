@@ -24,6 +24,9 @@ STATIONARY_MAX_DIST = 90.0
 STATIONARY_MIN_PROB = 0.4
 BLIND_SPOT_PRIORITY_DIST = 23.0
 BLIND_SPOT_HYSTERESIS_DIST = 25.0
+
+# [防護機制] 低速大舵角抑制靜止車參數 (解決市區轉彎誤煞)
+SUPPRESS_STATIONARY_SPEED = 30.0 / 3.6  # 嚴格限制在 30 km/h 以下 (轉換為 m/s)
 # ==========================================
 
 RADAR_TO_CENTER = 2.7
@@ -57,6 +60,7 @@ class Track:
     self.K_K = kalman_params.K
     self.kf = KF1D([[v_lead], [0.0]], self.K_A, self.K_C, self.K_K)
     
+    # 靜止目標信心度累加器 (防幽靈煞車核心)
     self.is_stopped_car_count = 0
     self.selected_count = 0
 
@@ -79,6 +83,8 @@ class Track:
       self.aLeadTau.update(0.0)
 
     self.cnt += 1
+    
+    # 每幀預設扣 1 分，目標必須持續符合靜止條件才會加分
     self.is_stopped_car_count = max(0, self.is_stopped_car_count - 1)
 
   def get_RadarState(self, model_prob: float = 0.0):
@@ -112,7 +118,7 @@ def laplacian_pdf(x: float, mu: float, b: float):
   return math.exp(-abs(x-mu)/b)
 
 
-def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks: dict[int, Track], path_x: list[float], path_y: list[float], current_prob_threshold: float):
+def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks: dict[int, Track], path_x: list[float], path_y: list[float], current_prob_threshold: float, ignore_stationary: bool = False):
   offset_vision_dist = lead.x[0] - RADAR_TO_CAMERA
 
   def prob(c):
@@ -123,6 +129,7 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
 
   track = max(tracks.values(), key=prob)
 
+  # 理智檢查: 距離與速度合理性
   dist_sane = abs(track.dRel - offset_vision_dist) < max([(offset_vision_dist)*.25, 5.0])
   vel_sane = (abs(track.vRel + v_ego - lead.v[0]) < 10) or (v_ego + track.vRel > 3)
   is_dynamic_target = dist_sane and vel_sane and (lead.prob > current_prob_threshold)
@@ -130,31 +137,51 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
   model_x = track.dRel + RADAR_TO_CAMERA
   expected_yRel = -np.interp(model_x, path_x, path_y)
   
-  curve_offset = abs(np.interp(50.0, path_x, path_y))
+  # ==========================================
+  # [防護機制] 30m 前方彎道預判與平滑極速收縮 (純幾何、無紅利)
+  # ==========================================
+  # 探測前方 30 公尺處的視覺軌跡橫向偏移
+  curve_offset = abs(np.interp(30.0, path_x, path_y))
   
-  dynamic_y_threshold = np.interp(curve_offset, [0.3, 1.2], [1.0, 0.5])
+  # 橫向範圍 (防止抓到壓線車): 
+  # [0.15, 0.25] 包含 15cm 的直路雜訊容許死區。
+  # 一旦偏移突破 15cm，橫向寬容度會極速且平滑地從 1.0m 縮減至 0.4m
+  dynamic_y_threshold = np.interp(curve_offset, [0.15, 0.25], [1.0, 0.4])
   y_sane_on_path = abs(track.yRel - expected_yRel) < dynamic_y_threshold
   
-  dynamic_max_dist = np.interp(curve_offset, [0.3, 1.2], [STATIONARY_MAX_DIST, 55.0])
+  # 縱向範圍 (防止掃到隔壁車道遠方物體): 
+  # 採用相同 [0.15, 0.25] 區間，讓最遠偵測距離從 90m 平滑驟降到 50m
+  dynamic_max_dist = np.interp(curve_offset, [0.15, 0.25], [STATIONARY_MAX_DIST, 50.0])
+  # ==========================================
   
   v_absolute = track.vRel + v_ego
   is_physically_stationary = abs(v_absolute) < 2.0
   
   dynamic_stat_prob = np.interp(track.dRel, [30.0, 90.0], [0.5, 0.4])
 
+  # 靜止目標必須通過所有嚴苛考驗 (包含上述的彎道動態範圍)
   is_stationary_target = (0.0 < track.dRel <= dynamic_max_dist) and is_physically_stationary and dist_sane and y_sane_on_path and (lead.prob > dynamic_stat_prob)
+
+  # ==========================================
+  # [防護機制] 低速大轉彎強制剔除靜止目標
+  # ==========================================
+  # 如果系統正處於市區轉彎抑制狀態，且目標絕對速度低於 2.0m/s，直接判斷為無效
+  if ignore_stationary and is_physically_stationary:
+      is_stationary_target = False
+  # ==========================================
 
   is_valid_lead = is_dynamic_target or is_stationary_target
 
+  # 如果完美符合靜止車條件，開始累積信心度分數 (+6)
   if is_valid_lead:
     track.is_stopped_car_count = min(track.is_stopped_car_count + 6, 50)
 
   best_track = None
 
   if is_dynamic_target:
-    best_track = track
-  elif track.is_stopped_car_count >= 40: 
-    best_track = track
+    best_track = track # 動態車輛直接鎖定
+  elif is_stationary_target and track.is_stopped_car_count >= 40: 
+    best_track = track # 靜止車輛必須穩定追蹤達到 40 分 (約 0.4 秒連續不丟失) 才會鎖定
 
   for c in tracks.values():
     if best_track is not None and c is best_track:
@@ -186,12 +213,12 @@ def get_RadarState_from_vision(lead_msg: capnp._DynamicStructReader, v_ego: floa
 def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capnp._DynamicStructReader,
              model_v_ego: float, path_x: list[float], path_y: list[float],
              low_speed_override: bool = True, is_locked: bool = False,
-             current_prob_threshold: float = 0.5) -> Tuple[dict[str, Any], bool]:
+             current_prob_threshold: float = 0.5, ignore_stationary: bool = False) -> Tuple[dict[str, Any], bool]:
   
   gate_threshold = min(current_prob_threshold, STATIONARY_MIN_PROB)
   
   if len(tracks) > 0 and ready and lead_msg.prob > gate_threshold:
-    best_valid_track = match_vision_to_track(v_ego, lead_msg, tracks, path_x, path_y, current_prob_threshold)
+    best_valid_track = match_vision_to_track(v_ego, lead_msg, tracks, path_x, path_y, current_prob_threshold, ignore_stationary)
   else:
     best_valid_track = None
 
@@ -204,6 +231,11 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
   lead_dict = fused_lead_dict  
   new_locked_state = is_locked 
 
+  # ==========================================
+  # [防護機制] 原廠低速盲區強迫煞車 (完全獨立)
+  # ==========================================
+  # 這裡不加入 not ignore_stationary，確保無論是否在轉彎，
+  # 只要極近距離 (<25m) 有障礙物，系統依然能強制介入防止追撞。
   if low_speed_override:
     low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
     
@@ -252,14 +284,33 @@ class RadarD:
     self.dynamic_prob_threshold = 0.5  
     self.low_prob_score = 0            
 
+    # ==========================================
+    # [新增變數] 防市區誤煞專用
+    # ==========================================
+    self.steering_angle = 0.0
+    self.ignore_stationary_active = False
+
   def update(self, sm: messaging.SubMaster, rr: car.RadarData):
     self.ready = sm.seen['modelV2']
     self.current_time = 1e-9*max(sm.logMonoTime.values())
 
     if sm.recv_frame['carState'] != self.last_v_ego_frame:
       self.v_ego = sm['carState'].vEgo
+      self.steering_angle = abs(sm['carState'].steeringAngleDeg) # 讀取方向盤絕對角度
       self.v_ego_hist.append(self.v_ego)
       self.last_v_ego_frame = sm.recv_frame['carState']
+
+    # ==========================================
+    # [防護機制] 遲滯邏輯 (Hysteresis) 過濾市區轉彎誤判
+    # ==========================================
+    if self.v_ego < SUPPRESS_STATIONARY_SPEED:  # 僅在車速低於 30 km/h 時啟動
+        if self.steering_angle > 30.0:
+            self.ignore_stationary_active = True   # 方向盤轉超過 30 度，啟動靜止車忽略
+        elif self.steering_angle < 20.0:
+            self.ignore_stationary_active = False  # 必須回正到 20 度內才恢復偵測，防反覆點頭
+    else:
+        self.ignore_stationary_active = False      # 車速 >= 30 km/h，強制全面恢復防護
+    # ==========================================
 
     ar_pts = {pt.trackId: [pt.dRel, pt.yRel, pt.vRel, pt.measured] for pt in rr.points}
 
@@ -312,16 +363,20 @@ class RadarD:
         self.dynamic_prob_threshold = 0.5
 
     if len(leads_v3) > 1:
+      # 將轉彎忽略狀態 (ignore_stationary_active) 傳遞給主目標 leadOne
       self.radar_state.leadOne, self.lead_one_locked = get_lead(
           self.v_ego, self.ready, self.tracks, leads_v3[0], model_v_ego, path_x, path_y, 
           low_speed_override=True, is_locked=self.lead_one_locked,
-          current_prob_threshold=self.dynamic_prob_threshold
+          current_prob_threshold=self.dynamic_prob_threshold,
+          ignore_stationary=self.ignore_stationary_active
       )
       
+      # 副目標 leadTwo 通常不需要轉彎過濾
       self.radar_state.leadTwo, _ = get_lead(
           self.v_ego, self.ready, self.tracks, leads_v3[1], model_v_ego, path_x, path_y, 
           low_speed_override=False, is_locked=False,
-          current_prob_threshold=0.5
+          current_prob_threshold=0.5,
+          ignore_stationary=False
       )
 
   def publish(self, pm: messaging.PubMaster):
