@@ -15,9 +15,9 @@ LongPersonality = log.LongitudinalPersonality
 # Follow distance profiles mapped to LongPersonality
 # 對應的時速斷點 (km/h):       [ 0,    10,   20,   30,   40,   50,   70,   90,  110,  130,  150 ]
 FOLLOW_PROFILES = {
-  LongPersonality.relaxed:    [1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.85, 1.85, 1.85],
-  LongPersonality.standard:   [1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.65, 1.65, 1.65],
-  LongPersonality.aggressive: [0.85, 0.85, 0.85, 1.25, 1.25, 1.25, 1.25, 1.25, 1.35, 1.35, 1.35],
+  LongPersonality.relaxed:    [1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.75, 1.85],
+  LongPersonality.standard:   [1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.45, 1.65],
+  LongPersonality.aggressive: [0.85, 0.85, 0.85, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.35],
 }
 
 # 將上述指定的 km/h 斷點轉換為系統使用的 m/s
@@ -106,4 +106,3 @@ class FollowDistanceController:
     if self.frame % int(1.0 / DT_MDL) == 0:
       self._personality = self.params.get('LongitudinalPersonality') or LongPersonality.standard
       self._enabled = self.params.get_bool('DynamicFollow')
-
