@@ -27,7 +27,7 @@ MAX_ACCEL_BREAKPOINTS =       [0.0,  0.5,  1.0,  4.0,   6.0,  9.0,  11.0, 16.0, 
 # 煞車設定檔 (Min Accel Profiles)
 # 根據不同的性格與車速，定義車輛允許的最大減速度 (負值)
 MIN_ACCEL_PROFILES = {
-  AccelPersonality.eco:    [-.002, -.003, -0.25, -0.27, -0.30, -0.35, -0.44, -2.0],
+  AccelPersonality.eco:    [-.002, -.003, -0.25, -0.27, -0.30, -0.40, -0.55, -2.0],
   AccelPersonality.normal: [-.002, -.003, -0.26, -0.29, -0.33, -0.50, -0.76, -2.0],
   AccelPersonality.sport:  [-.002, -.003, -0.26, -0.29, -0.33, -0.55, -0.80, -2.0],
 }
