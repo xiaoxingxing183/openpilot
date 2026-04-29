@@ -26,7 +26,7 @@ APM_DEPARTURE_SPEED = 30 * 1000 / 3600   # 30 km/h：起步激烈模式上限
 V_LEAD_RELAX_ENTER = 20 * 1000 / 3600    # 20 km/h：進入前車緩和模式的門檻，同時加入前車須減速狀態
 A_LEAD_RELAX_ENTER = -0.1                # -0.1 m/s^2：前車處於減速狀態的門檻
 V_LEAD_RELAX_EXIT = 22 * 1000 / 3600     # 22 km/h：解除前車緩和模式的門檻 
-D_LEAD_RELAX_ENTER = 33.0                # 30 m：進入前車緩和模式的最短車距門檻 (場景2與場景3共用)
+D_LEAD_RELAX_ENTER = 20.0                # 30 m：進入前車緩和模式的最短車距門檻 (場景2與場景3共用)
 
 # 場景 3 常數 (與前車的相對速差)
 V_REL_RELAX_ENTER = 20 * 1000 / 3600     # 20 km/h：自車比前車快 20 km/h 時，進入緩和模式
@@ -65,7 +65,7 @@ class APM:
     # --- 2. 判斷前車狀況 ---
     if has_lead:
       # 場景 2：前車絕對速度判斷 + 負加速判斷 + 車距判斷
-      # 條件：前車 < 20 km/h 且 前車正在減速 (a_lead < A_LEAD_RELAX_ENTER) 且 車距大於等於 30 公尺
+      # 條件：前車 < 20 km/h 且 前車正在減速 (a_lead < A_LEAD_RELAX_ENTER) 且 車距大於等於 20 公尺
       if v_lead < V_LEAD_RELAX_ENTER and a_lead < A_LEAD_RELAX_ENTER and d_lead >= D_LEAD_RELAX_ENTER:
         self.is_relaxed_mode = True
       elif v_lead > V_LEAD_RELAX_EXIT:
@@ -73,7 +73,7 @@ class APM:
         
       # 場景 3：與前車相對速差判斷 + 車距判斷 (v_ego - v_lead 就是我比前車快多少)
       v_rel = v_ego - v_lead
-      # 條件：我比前車快超過 20 km/h 且 車距大於等於 30 公尺 (新增車距條件)
+      # 條件：我比前車快超過 20 km/h 且 車距大於等於 20 公尺 (新增車距條件)
       if v_rel >= V_REL_RELAX_ENTER and d_lead >= D_LEAD_RELAX_ENTER:
         self.is_approaching = True
       elif v_rel <= V_REL_RELAX_EXIT:
