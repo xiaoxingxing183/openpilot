@@ -44,7 +44,7 @@ LEAD_COOLDOWN_TIME = 0.5
 SPEED_BP = [0., 10., 20., 30.]         
 MIN_DIST_V = [5., 10., 15., 20.]       
 
-SOFT_HOLD_RANGE_MIN = 0.70             
+SOFT_HOLD_RANGE_MIN = 0.76             
 SOFT_HOLD_RANGE_MAX = 0.99             
 SOFT_HOLD_TTC_THRESHOLD = 2.5          
 VREL_DEBOUNCE_TIME = 0.6               
