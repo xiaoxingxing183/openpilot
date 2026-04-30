@@ -26,11 +26,11 @@ APM_DEPARTURE_SPEED = 30 * 1000 / 3600   # 30 km/h：起步激烈模式上限
 V_LEAD_RELAX_ENTER = 20 * 1000 / 3600    # 20 km/h：進入前車緩和模式的門檻，同時加入前車須減速狀態
 A_LEAD_RELAX_ENTER = -0.1                # -0.1 m/s^2：前車處於減速狀態的門檻
 V_LEAD_RELAX_EXIT = 22 * 1000 / 3600     # 22 km/h：解除前車緩和模式的門檻 
-D_LEAD_RELAX_ENTER = 20.0                # 30 m：進入前車緩和模式的最短車距門檻 (場景2與場景3共用)
+D_LEAD_RELAX_ENTER = 40.0                # 40 m：進入前車緩和模式的最短車距門檻 (場景2與場景3共用)
 
 # 場景 3 常數 (與前車的相對速差)
 V_REL_RELAX_ENTER = 20 * 1000 / 3600     # 20 km/h：自車比前車快 20 km/h 時，進入緩和模式
-V_REL_RELAX_EXIT = 5 * 1000 / 3600       # 5 km/h：速差降至 5 km/h 以內 (速度差不多時)，解除緩和模式
+V_REL_RELAX_EXIT = 10 * 1000 / 3600       # 10 km/h：速差降至 10 km/h 以內 (速度差不多時)，解除緩和模式
 
 V_EGO_STOPPED = 0.1                      # 低於 0.1 m/s (約 0.36 km/h) 視為完全靜止
 
