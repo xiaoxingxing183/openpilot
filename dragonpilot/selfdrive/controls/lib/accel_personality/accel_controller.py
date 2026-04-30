@@ -18,7 +18,7 @@ ACCEL_PERSONALITY_OPTIONS = [AccelPersonality.eco, AccelPersonality.normal, Acce
 # 根據不同的性格與車速(v_ego)，定義車輛允許的最大正加速度
 MAX_ACCEL_PROFILES = {
   AccelPersonality.eco:       [1.00, 0.40, 1.00, 1.40,  1.20, 1.00, 0.80, 0.40,  0.40, 0.20, 0.12, 0.08],
-  AccelPersonality.normal:    [1.50, 0.60, 1.20, 1.80,  1.40, 1.20, 1.00, 0.80,  0.60, 0.40, 0.30, 0.10],
+  AccelPersonality.normal:    [1.40, 0.50, 1.10, 1.60,  1.30, 1.10, 1.00, 0.60,  0.50, 0.40, 0.30, 0.10],
   AccelPersonality.sport:     [2.00, 0.80, 1.40, 2.00,  1.60, 1.40, 1.20, 1.00,  0.90, 0.80, 0.50, 0.25],
 }
 # 對應最大加速度的車速節點 (單位: m/s)
