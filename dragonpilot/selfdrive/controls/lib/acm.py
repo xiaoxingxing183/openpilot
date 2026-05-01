@@ -437,13 +437,13 @@ class ACM:
     self.coasting.update_lead_status(lead, v_ego, current_time)
     self.coasting.update_states(self.enabled, user_ctrl_lon, v_ego, v_cruise, self.current_pitch, dtsc_is_active, current_time)
 
-  def update_a_desired_trajectory(self, a_desired_trajectory, v_ego=0.0, lead=None, t_follow=None):
+  def update_a_desired_trajectory(self, a_desired_trajectory, v_ego=0.0, lead=None):
     """注入並修改原廠輸出的縱向控制軌跡"""
     if self._dtsc_is_active or not self._is_normal_mode:
         return a_desired_trajectory
 
-    if t_follow is None:
-        t_follow = get_T_FOLLOW(self.personality)
+    # 取得原廠對應性格的預設跟車秒距
+    t_follow = get_T_FOLLOW(self.personality)
 
     # 1. 先經過純滑行邏輯處理
     traj = self.coasting.process_trajectory(a_desired_trajectory, lead)
