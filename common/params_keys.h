@@ -171,7 +171,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"dp_honda_nidec_stock_long", {PERSISTENT, BOOL, "0"}},
     {"dp_htd_enabled", {PERSISTENT, BOOL, "1"}},
     {"dp_htd_turn_angle_threshold", {PERSISTENT, INT, "90"}},
-    {"DynamicFollow", {PERSISTENT, BOOL, "1"}},
     {"AccelPersonality", {PERSISTENT, INT, std::to_string(static_cast<int>(cereal::LongitudinalPlanDP::AccelerationPersonality::NORMAL))}},
     {"AccelPersonalityEnabled", {PERSISTENT, BOOL, "1"}},
 };
