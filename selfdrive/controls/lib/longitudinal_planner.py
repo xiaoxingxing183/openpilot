@@ -71,7 +71,7 @@ class LongitudinalPlanner(LongitudinalPlannerDP):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
     
-    # 初始化 DP Planner (接管 Dynamic Follow, DTSC, accel_controller)
+    # 初始化 DP Planner (接管 DTSC, accel_controller)
     LongitudinalPlannerDP.__init__(self, self.CP, self.mpc)
 
     self.fcw = False
@@ -118,7 +118,7 @@ class LongitudinalPlanner(LongitudinalPlannerDP):
   def update(self, sm, dp_flags = 0):
     mode = 'blended' if sm['selfdriveState'].experimentalMode else 'acc'
 
-    # 刷新 DP Planner 內的 dynamic_follow, accel_controller 等
+    # 刷新 DP Planner 內的 accel_controller 等
     LongitudinalPlannerDP.update(self, sm)
 
     if dp_flags & DPFlags.AEM:
@@ -209,15 +209,13 @@ class LongitudinalPlanner(LongitudinalPlannerDP):
     # 取得 DP Planner 的保守目標與自定義參數
     v_cruise_target, a_target_from_dp = LongitudinalPlannerDP.update_targets(self, sm, self.v_desired_filter.x, self.a_desired, v_cruise)
     a_cruise_min_override = LongitudinalPlannerDP.get_cruise_min_accel(self, v_ego)
-    t_follow_override = LongitudinalPlannerDP.get_t_follow(self, v_ego)
 
     if force_slow_decel:
       v_cruise_target = 0.0
 
     # 傳入 override 參數給 MPC
     self.mpc.update(radar_state, v_cruise_target, personality=personality, 
-                    a_cruise_min_override=a_cruise_min_override, 
-                    t_follow_override=t_follow_override)
+                    a_cruise_min_override=a_cruise_min_override)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
@@ -225,15 +223,14 @@ class LongitudinalPlanner(LongitudinalPlannerDP):
     # ACM - Adaptive Coasting Module
     if dp_flags & DPFlags.ACM:
       user_control = long_control_off if self.CP.openpilotLongitudinalControl else not sm['selfdriveState'].enabled
-      # [修改處] 在這裡將 mode=mode 傳進 ACM
       self.acm.update_states(sm['carControl'], sm['radarState'], user_control, v_ego, v_cruise, mode=mode, personality=personality, dtsc_is_active=is_dtsc_active)
 
       lead = sm['radarState'].leadOne
+      # [修正點]：這裡已經確實拔除了 t_follow 參數
       self.a_desired_trajectory = self.acm.update_a_desired_trajectory(
         self.a_desired_trajectory,
         v_ego=v_ego,
-        lead=lead,
-        t_follow=t_follow_override
+        lead=lead
       )
 
     self.j_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC[:-1], self.mpc.j_solution)
@@ -253,7 +250,6 @@ class LongitudinalPlanner(LongitudinalPlannerDP):
     output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
     output_should_stop_e2e = sm['modelV2'].action.shouldStop
 
-    # [修改處] 將原本的 if sm['selfdriveState'].experimentalMode: 改為判斷 mode
     if mode == 'blended':
       output_a_target = min(output_a_target_e2e, output_a_target_mpc)
       self.output_should_stop = output_should_stop_e2e or output_should_stop_mpc
