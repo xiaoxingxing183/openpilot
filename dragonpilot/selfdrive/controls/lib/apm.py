@@ -1,4 +1,3 @@
-
 """
 Copyright (c) 2026, Rick Lan
 
@@ -24,15 +23,14 @@ APM_DEPARTURE_SPEED = 30 * 1000 / 3600   # 30 km/h：起步激烈模式上限
 
 # 場景 2 常數 (前車絕對速度、加速度與車距)
 V_LEAD_RELAX_ENTER = 20 * 1000 / 3600    # 20 km/h：進入前車緩和模式的門檻，同時加入前車須減速狀態
-A_LEAD_RELAX_ENTER = -0.1                # -0.1 m/s^2：前車處於減速狀態的門檻
-V_LEAD_RELAX_EXIT = 22 * 1000 / 3600     # 22 km/h：解除前車緩和模式的門檻 
-D_LEAD_RELAX_ENTER = 40.0                # 40 m：進入前車緩和模式的最短車距門檻 (場景2與場景3共用)
+A_LEAD_RELAX_ENTER = -0.2                # -0.2 m/s^2：前車處於減速狀態的門檻
+D_LEAD_RELAX_ENTER = 20.0                # 20 m：進入前車緩和模式的最短車距門檻 (場景2與場景3共用)
 
 # 場景 3 常數 (與前車的相對速差)
 V_REL_RELAX_ENTER = 20 * 1000 / 3600     # 20 km/h：自車比前車快 20 km/h 時，進入緩和模式
-V_REL_RELAX_EXIT = 10 * 1000 / 3600       # 10 km/h：速差降至 10 km/h 以內 (速度差不多時)，解除緩和模式
+V_REL_RELAX_EXIT = 10 * 1000 / 3600      # 10 km/h：速差降至 10 km/h 以內 (速度差不多時)，解除緩和模式 (場景2與3共用)
 
-V_EGO_STOPPED = 0.1                      # 低於 0.1 m/s (約 0.36 km/h) 視為完全靜止
+V_EGO_STOPPED = 0.5                      # 低於 0.5 m/s (約 1.8 km/h) 視為完全靜止
 
 
 class APM:
@@ -42,6 +40,9 @@ class APM:
     self.is_departing = False       # 場景 1：是否在起步加速階段
     self.is_relaxed_mode = False    # 場景 2：是否正處於前車慢速的緩和模式
     self.is_approaching = False     # 場景 3：是否正快速接近慢車中 (速差過大)
+    
+    # 濾波平滑化狀態
+    self.v_rel_smoothed = None      # 用來儲存過濾/平滑化後的相對速差
 
   def get_personality(self, v_ego, has_lead, v_lead, a_lead, d_lead, personality):
     """
@@ -64,43 +65,53 @@ class APM:
 
     # --- 2. 判斷前車狀況 ---
     if has_lead:
+      # 取得當下瞬間的相對速差 (原始含有雜訊的資料)
+      v_rel_raw = v_ego - v_lead
+
+      # --- 低通濾波處理 (Exponential Moving Average) ---
+      if self.v_rel_smoothed is None:
+        # 剛抓到前車時，以當下數值為基準
+        self.v_rel_smoothed = v_rel_raw
+      else:
+        # 保留 90% 歷史平滑值，採納 10% 最新值，削平雜訊與突波
+        self.v_rel_smoothed = self.v_rel_smoothed * 0.90 + v_rel_raw * 0.10
+      
+      # 將平滑後的數值指派給 v_rel，供後續判定使用
+      v_rel = self.v_rel_smoothed
+
       # 場景 2：前車絕對速度判斷 + 負加速判斷 + 車距判斷
-      # 條件：前車 < 20 km/h 且 前車正在減速 (a_lead < A_LEAD_RELAX_ENTER) 且 車距大於等於 20 公尺
       if v_lead < V_LEAD_RELAX_ENTER and a_lead < A_LEAD_RELAX_ENTER and d_lead >= D_LEAD_RELAX_ENTER:
         self.is_relaxed_mode = True
-      elif v_lead > V_LEAD_RELAX_EXIT:
+      # 當速差降至 10 km/h 以內時解除
+      elif v_rel <= V_REL_RELAX_EXIT:
         self.is_relaxed_mode = False
         
-      # 場景 3：與前車相對速差判斷 + 車距判斷 (v_ego - v_lead 就是我比前車快多少)
-      v_rel = v_ego - v_lead
-      # 條件：我比前車快超過 20 km/h 且 車距大於等於 20 公尺 (新增車距條件)
+      # 場景 3：與前車相對速差判斷 + 車距判斷
       if v_rel >= V_REL_RELAX_ENTER and d_lead >= D_LEAD_RELAX_ENTER:
         self.is_approaching = True
+      # 當速差降至 10 km/h 以內時解除
       elif v_rel <= V_REL_RELAX_EXIT:
-        # 速差縮小到 5 km/h 以內 (包含前車比我快的情形)，解除接近模式
         self.is_approaching = False
         
     else:
       # 如果沒有前車，解除所有與前車相關的緩和模式
       self.is_relaxed_mode = False
       self.is_approaching = False
+      self.v_rel_smoothed = None  # 失去前車目標時，清空平滑化數值
 
     # --- 3. 決定最終輸出的模式 (依照優先級：場景 1 > 場景 2 > 場景 3) ---
     
     # 【最優先】場景 1：起步加速階段 (0~30 km/h)
-    # 只要符合起步條件，無論前車狀態如何，一律輸出 aggressive
     if self.is_departing and v_ego < APM_DEPARTURE_SPEED:
       return log.LongitudinalPersonality.aggressive
 
     # 【次優先】場景 2：前車過慢或減速中
-    # 在非起步狀態下，如果前車狀態符合場景 2，進入 relaxed 模式
     if self.is_relaxed_mode:
       return log.LongitudinalPersonality.relaxed
 
     # 【最後優先】場景 3：與前車的相對速差過大 (正在快速接近)
-    # 如果場景 1 和場景 2 都不成立，才判斷是否符合場景 3
     if self.is_approaching:
       return log.LongitudinalPersonality.relaxed
 
-    # 條件解除：切回原本的風格 (當上述場景都不成立時)
+    # 條件解除：切回原本的風格
     return personality
