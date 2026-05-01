@@ -185,12 +185,6 @@ SETTINGS = [
         "description": lambda: tr("DTSC automatically adjusts the vehicle's predicted speed based on upcoming road curvature and grip conditions.<br>Originally from the openpilot TACO branch."),
       },
       {
-        "key": "DynamicFollow",
-        "type": "toggle_item",
-        "title": lambda: tr("Dynamic Follow Mode (DFM)"),
-        "description": lambda: tr("Dynamically adjusts the follow distance based on speed and selected longitudinal personality."),
-      },
-      {
         "key": "dp_lon_apm",
         "type": "toggle_item",
         "title": lambda: tr("Adaptive Personality Mode (APM)"),
