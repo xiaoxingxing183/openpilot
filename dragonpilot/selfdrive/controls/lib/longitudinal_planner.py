@@ -10,7 +10,6 @@ from opendbc.car import structs
 from openpilot.common.constants import CV
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
 
-from dragonpilot.selfdrive.controls.lib.dynamic_personality.dynamic_follow import FollowDistanceController
 from dragonpilot.selfdrive.controls.lib.dtsc import DTSC
 from dragonpilot.selfdrive.controls.lib.accel_personality.accel_controller import AccelPersonalityController
 from opendbc.car.interfaces import ACCEL_MIN
@@ -20,7 +19,6 @@ LongitudinalPlanSource = custom.LongitudinalPlanDP.LongitudinalPlanSource
 
 class LongitudinalPlannerDP:
   def __init__(self, CP: structs.CarParams, mpc):
-    self.dynamic_follow = FollowDistanceController()
     # self.acm = ACM()
     self.dtsc = DTSC() # 統一正名為 dtsc
     self.accel_controller = AccelPersonalityController() # 初始化 accel_controller
@@ -40,16 +38,9 @@ class LongitudinalPlannerDP:
       return self.accel_controller.get_min_accel(v_ego)
     return None
 
-  # dynamic_follow 根據車速調整跟車距離
-  def get_t_follow(self, v_ego: float) -> float | None:
-    if self.dynamic_follow.is_enabled():
-      return self.dynamic_follow.get_follow_distance_multiplier(v_ego)
-    return None
-
   def update(self, sm: messaging.SubMaster) -> None:
     # 刷新各模組
     # self.acm.update(sm, self.CP)
-    self.dynamic_follow.update()
     self.accel_controller.update() # 每個 frame 刷新一次設定檔
 
     # 使用範例 Smart Cruise Control
