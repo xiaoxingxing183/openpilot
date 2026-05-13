@@ -164,7 +164,7 @@ SETTINGS = [
   },
   {
     "title": "Longitudinal",
- #   "condition": "openpilotLongitudinalControl", #隱藏縱向代碼
+    "condition": "openpilotLongitudinalControl", #隱藏縱向代碼
     "settings": [
       {
         "key": "dp_lon_acm",
