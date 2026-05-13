@@ -64,7 +64,9 @@ class CarState(CarStateBase):
 
     # Doors
     ret.doorOpen = False  # TODO
-
+    ret.doorOpen = any([cp.vl["GW_HSC2_BCM_FrP04"]["DrvrDoorOpenSts_H1_Safety"],
+                        cp.vl["GW_HSC2_BCM_FrP04"]["FrtPsngDoorOpenSts_H1_Safety"]])
+    
     # Blinkers
     if self.CP.carFingerprint == CAR.MG_ZS:
       ret.leftBlinker = bool(cp.vl["GW_HSC2_BCM_FrP04"]["BlinkerLeft"])
@@ -77,9 +79,10 @@ class CarState(CarStateBase):
     ret.seatbeltUnlatched = cp.vl["GW_HSC2_SDM_FrP00"]["DrvrSbltAtcHSC2"] != 1
 
     # Blindspot
-    # ret.leftBlindspot = False
-    # ret.rightBlindspot = False
-
+    #if self.CP.enableBsm:
+    ret.leftBlindspot  = cp.vl["RDA_HSC1_P02"]["LBSDAndLCAWrnng_HS"] > 0
+    ret.rightBlindspot = cp.vl["RDA_HSC1_P02"]["RBSDAndLCAWrnng_HS"] > 0
+    
     # AEB
     ret.stockAeb = False
 
