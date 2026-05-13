@@ -52,6 +52,18 @@ static void mg_rx_hook(const CANPacket_t *msg) {
       bool cruise_engaged = (cruise_state == 2) ||  // Active
                             (cruise_state == 3);    // Override
       pcm_cruise_check(cruise_engaged);
+
+      // dp - ALKA 狀態同步
+      bool acc_main_on = (cruise_state != 0);
+      
+      if (alka_allowed && ((alternative_experience & ALT_EXP_ALKA) != 0)) {
+        lkas_on = acc_main_on;
+      }
+      
+      // 當駕駛關閉總開關時，強制撤銷縱向控制權限
+      if (!acc_main_on) {
+        controls_allowed = false;
+      }
     }
   }
 }
@@ -75,7 +87,14 @@ static bool mg_tx_hook(const CANPacket_t *msg) {
     int desired_torque = (((msg->data[0] & 0x7U) << 8) | msg->data[1]) - 1024U;
     bool steer_req = GET_BIT(msg, 35U);
 
-    violation |= steer_torque_cmd_checks(desired_torque, steer_req, MG_STEERING_LIMITS);
+    // dp - ALKA: 改用 lat_control_allowed() 替代預設檢查
+    if (!lat_control_allowed()) {
+      if (steer_req || desired_torque != 0) {
+        tx = false;
+      }
+    } else {
+      violation |= steer_torque_cmd_checks(desired_torque, steer_req, MG_STEERING_LIMITS);
+    }
   }
 
   if (violation) {
@@ -91,6 +110,8 @@ static bool mg_tx_hook(const CANPacket_t *msg) {
   {.msg = {{0x242, 0, 8, .frequency = 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  /* RADAR_HSC2_FrP00 */
 
 static safety_config mg_init(uint16_t param) {
+  alka_allowed = true; // dp - 開放 ALKA 支援
+
   static const CanMsg MG_TX_MSGS[] = {{0x1fd, 0, 8, .check_relay = true}};
 
   static RxCheck mg_rx_checks[] = {
