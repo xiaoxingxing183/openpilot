@@ -48,10 +48,11 @@ class CarState(CarStateBase):
 
     ret.steerFaultTemporary = cp_cam.vl["FVCM_HSC2_FrP02"]["LDWSysFltStsHSC2"] != 0  # TODO: validate
 
-    # Cruise state
-    ret.cruiseState.enabled = cp.vl["RADAR_HSC2_FrP00"]["ACCSysSts_RadarHSC2"] in (2, 3)  # Active, Override
-    ret.cruiseState.available = True
-    ret.cruiseState.standstill = False  # TODO
+    # Cruise state (基於 DBC 定義)
+    acc_sys_sts = cp.vl["RADAR_HSC2_FrP00"]["ACCSysSts_RadarHSC2"]
+    ret.cruiseState.enabled = acc_sys_sts in (2, 3)  # 2: Active, 3: Override
+    ret.cruiseState.available = (acc_sys_sts != 0)   # 非 0 代表總開關開啟
+    ret.cruiseState.standstill = acc_sys_sts in (5, 6) # 5: Standstill Active, 6: Standstill Wait
     ret.cruiseState.speed = cp.vl["RADAR_HSC2_FrP02"]["ACCDrvrSelTrgtSpd_RadarHSC2"] * CV.KPH_TO_MS
 
     ret.accFaulted = cp_cam.vl["FVCM_HSC2_FrP02"]["TJAICASysFltStsHSC2"] != 0  # TODO: validate
@@ -64,9 +65,7 @@ class CarState(CarStateBase):
 
     # Doors
     ret.doorOpen = False  # TODO
-    ret.doorOpen = any([cp.vl["GW_HSC2_BCM_FrP04"]["DrvrDoorOpenSts_H1_Safety"],
-                        cp.vl["GW_HSC2_BCM_FrP04"]["FrtPsngDoorOpenSts_H1_Safety"]])
-    
+
     # Blinkers
     if self.CP.carFingerprint == CAR.MG_ZS:
       ret.leftBlinker = bool(cp.vl["GW_HSC2_BCM_FrP04"]["BlinkerLeft"])
@@ -79,12 +78,14 @@ class CarState(CarStateBase):
     ret.seatbeltUnlatched = cp.vl["GW_HSC2_SDM_FrP00"]["DrvrSbltAtcHSC2"] != 1
 
     # Blindspot
-    #if self.CP.enableBsm:
-    ret.leftBlindspot  = cp.vl["RDA_HSC1_P02"]["LBSDAndLCAWrnng_HS"] > 0
-    ret.rightBlindspot = cp.vl["RDA_HSC1_P02"]["RBSDAndLCAWrnng_HS"] > 0
-    
+    # ret.leftBlindspot = False
+    # ret.rightBlindspot = False
+
     # AEB
     ret.stockAeb = False
+
+    # dp - ALKA: 將 ACC 總開關狀態賦值給 lkas_on，驅動全時車道維持
+    self.lkas_on = ret.cruiseState.available
 
     return ret
 
