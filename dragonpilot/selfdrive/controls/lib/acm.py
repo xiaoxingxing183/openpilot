@@ -57,7 +57,7 @@ RATIO_ENTER_THRESHOLD = 1.00           # 空間充裕界線：實體距離大於
 RATIO_EXIT_THRESHOLD = 0.98            # 重新進入滑行的判斷線
 
 SOFT_HOLD_TTC_THRESHOLD = 2.5          # 允許 Soft Hold 介入的最大 TTC
-VREL_DEBOUNCE_TIME = 0.6               # 高速差防震盪計時器
+VREL_DEBOUNCE_TIME = 0.4               # 高速差防震盪計時器
 
 # 微煞車力道對照表 (車速 km/h 對應 加速度 m/s^2)
 SOFT_HOLD_SPEED_BP = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0]
@@ -233,7 +233,7 @@ class SoftHoldLogic:
             self.intent_accelerating = False
 
         # 速差過大保護 (防高速逼近)
-        if lead.vRel > 1.0:
+        if lead.vRel > 0.5:
             if not self._vrel_high_active:
                 self._vrel_high_active = True
                 self._vrel_high_start_time = current_time
@@ -353,9 +353,9 @@ class SoftHoldLogic:
                     current_soft_hold_accel = 0.0
                 target_factor = 0.0 
 
-        alpha = 0.10 if target_factor > self._soft_hold_factor else 0.20 
+        alpha = 0.30 if target_factor > self._soft_hold_factor else 0.20 
     else:
-        alpha = 0.10 if target_factor > self._soft_hold_factor else 0.20 
+        alpha = 0.30 if target_factor > self._soft_hold_factor else 0.20 
 
     self._last_target_factor = target_factor
     self._last_soft_hold_accel = current_soft_hold_accel
