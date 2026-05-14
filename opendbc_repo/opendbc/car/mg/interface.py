@@ -11,6 +11,12 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, dp_params, docs) -> structs.CarParams:
+    # =============== 強制寫死車型 (測試解法) ===============
+    # 強制將 candidate 設為 MG_ZS，跳過韌體版本辨識
+    candidate = CAR.MG_ZS
+    ret.carFingerprint = candidate
+    # =======================================================
+
     ret.brand = "mg"
 
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.mg)]
