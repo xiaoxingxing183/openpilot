@@ -121,8 +121,8 @@ class AEM:
         # 取得模型預測終點的左右偏移量 (取絕對值)
         curve_y_offset = abs(model_msg.position.y[ModelConstants.IDX_N - 1])
         
-        # 設定閾值：路徑短於 20m，且左右偏移大於 2.5m (模擬交流道大彎曲率)
-        is_sharp_ramp_curve = (model_end_x < 20.0) and (curve_y_offset > 2.5)
+        # 設定閾值：路徑短於 25m，且左右偏移大於 2.5m (模擬交流道大彎曲率)
+        is_sharp_ramp_curve = (model_end_x < 25.0) and (curve_y_offset > 2.5)
         # ------------------------------------
         
         # 只有在「不是閘道大彎道」的情況下，才繼續進行 AEM 觸發判斷
