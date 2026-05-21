@@ -1,3 +1,12 @@
+
+dragonpilot 0.10.3 r2 (2026-05-22)
+0.10.3 Final Update
+ACM removed, replaced with OCM for overtaking and coasting
+ACM no longer works in the new portrait mode
+APM optimized
+HTD response is faster
+
+
 dragonpilot 0.10.3 r2 (2026-02-24)
 =======================
 * ✅ openpilot 0.10.3 (devel-staging) (2025-11-19)

@@ -36,6 +36,14 @@ ROAD_CAM_MIN_SPEED = 10  # m/s (25 mph)
 
 CAM_Y_OFFSET = 20
 
+# --- [新增] DP BSM & 方向燈常數 ---
+DP_INDICATOR_SIZE = 15
+DP_INDICATOR_BLINK_RATE_FAST = int(gui_app.target_fps * 0.25)
+DP_INDICATOR_BLINK_RATE_STD = int(gui_app.target_fps * 0.5)
+DP_INDICATOR_COLOR_BSM = rl.Color(255, 255, 0, 255)
+DP_INDICATOR_COLOR_BLINKER = rl.Color(0, 255, 0, 255)
+# --------------------------------
+
 
 class BookmarkIcon(Widget):
   PEEK_THRESHOLD = 50  # If icon peeks out this much, snap it fully visible
@@ -161,6 +169,15 @@ class AugmentedRoadView(CameraView):
 
     self._fade_texture = gui_app.texture("icons_mici/onroad/onroad_fade.png")
 
+    # --- [新增] DP BSM & 方向燈狀態變數 ---
+    self._dp_indicator_show_left = False
+    self._dp_indicator_show_right = False
+    self._dp_indicator_count_left = 0
+    self._dp_indicator_count_right = 0
+    self._dp_indicator_color_left = rl.Color(0, 0, 0, 0)
+    self._dp_indicator_color_right = rl.Color(0, 0, 0, 0)
+    # ------------------------------------
+
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
 
@@ -185,6 +202,11 @@ class AugmentedRoadView(CameraView):
   def _render(self, _):
     start_draw = time.monotonic()
     self._switch_stream_if_needed(ui_state.sm)
+
+    # --- [新增] 更新指示燈狀態 ---
+    if ui_state.started:
+      self._update_dp_indicator_states(ui_state.sm)
+    # ---------------------------
 
     # Update calibration before rendering
     self._update_calibration()
@@ -237,6 +259,20 @@ class AugmentedRoadView(CameraView):
 
     # End clipping region
     rl.end_scissor_mode()
+
+    # --- [新增] 繪製兩側 BSM 與 方向燈條 ---
+    if ui_state.started:
+      indicator_y = int(self._content_rect.y + 4 * DP_INDICATOR_SIZE)
+      indicator_height = int(self._content_rect.height - 8 * DP_INDICATOR_SIZE)
+      
+      # 左側提示條 (貼著螢幕最左側)
+      if self._dp_indicator_show_left:
+        rl.draw_rectangle(int(self._content_rect.x), indicator_y, DP_INDICATOR_SIZE, indicator_height, self._dp_indicator_color_left)
+      
+      # 右側提示條 (貼著相機畫面的最右側，避開 MICI 側邊欄)
+      if self._dp_indicator_show_right:
+        rl.draw_rectangle(int(self._content_rect.x + self._content_rect.width - DP_INDICATOR_SIZE), indicator_y, DP_INDICATOR_SIZE, indicator_height, self._dp_indicator_color_right)
+    # ------------------------------------
 
     # Custom UI extension point - add custom overlays here
     # Use self._content_rect for positioning within camera bounds
@@ -350,6 +386,42 @@ class AugmentedRoadView(CameraView):
     self._model_renderer.set_transform(video_transform @ calib_transform)
 
     return self._cached_matrix
+
+  # --- [新增] DP BSM & 方向燈邏輯函數 ---
+  def _update_dp_indicator_side_state(self, blinker_state, bsm_state, show_prev, count_prev):
+    show = show_prev
+    count = count_prev
+    color = rl.Color(0, 0, 0, 0)
+
+    if not blinker_state and not bsm_state:
+      show = False
+      count = 0
+    else:
+      count += 1
+
+    if bsm_state and blinker_state:
+      show = not show if count % DP_INDICATOR_BLINK_RATE_FAST == 0 else show
+      color = DP_INDICATOR_COLOR_BSM
+    elif blinker_state:
+      show = not show if count % DP_INDICATOR_BLINK_RATE_STD == 0 else show
+      color = DP_INDICATOR_COLOR_BLINKER
+    elif bsm_state:
+      show = True
+      color = DP_INDICATOR_COLOR_BSM
+    else:
+      show = False
+
+    return show, count, color
+
+  def _update_dp_indicator_states(self, sm):
+    cs = sm['carState']
+    self._dp_indicator_show_left, self._dp_indicator_count_left, self._dp_indicator_color_left = \
+      self._update_dp_indicator_side_state(cs.leftBlinker, cs.leftBlindspot,
+                                           self._dp_indicator_show_left, self._dp_indicator_count_left)
+    self._dp_indicator_show_right, self._dp_indicator_count_right, self._dp_indicator_color_right = \
+      self._update_dp_indicator_side_state(cs.rightBlinker, cs.rightBlindspot,
+                                           self._dp_indicator_show_right, self._dp_indicator_count_right)
+  # ------------------------------------
 
 
 if __name__ == "__main__":

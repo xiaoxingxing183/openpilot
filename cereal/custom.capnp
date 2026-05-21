@@ -127,8 +127,7 @@ struct LongitudinalPlanDP @0xb86e6369214c01c8 {
 
   enum LongitudinalPlanSource {
     cruise @0;
-    acm @1;
-    dtsc @2;
+    dtsc @1;
   }
   enum AccelerationPersonality {
     sport @0;

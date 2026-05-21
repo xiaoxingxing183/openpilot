@@ -144,7 +144,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"dp_lon_ext_radar", {PERSISTENT, BOOL, "0"}},
     {"dp_lat_road_edge_detection", {PERSISTENT, BOOL, "0"}},
     {"dp_ui_rainbow", {PERSISTENT, BOOL, "0"}},
-    {"dp_lon_acm", {PERSISTENT, BOOL, "0"}},
+    {"dp_lon_ocm", {PERSISTENT, BOOL, "0"}},
     {"dp_lon_aem", {PERSISTENT, BOOL, "0"}},
     {"dp_lon_dtsc", {PERSISTENT, BOOL, "0"}},
     {"dp_lon_apm", {PERSISTENT, BOOL, "0"}},
@@ -170,7 +170,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"dp_vag_avoid_eps_lockout", {PERSISTENT, BOOL, "0"}},
     {"dp_honda_nidec_stock_long", {PERSISTENT, BOOL, "0"}},
     {"dp_htd_enabled", {PERSISTENT, BOOL, "1"}},
-    {"dp_htd_turn_angle_threshold", {PERSISTENT, INT, "90"}},
+    {"dp_htd_turn_angle_threshold", {PERSISTENT, INT, "60"}},
     {"AccelPersonality", {PERSISTENT, INT, std::to_string(static_cast<int>(cereal::LongitudinalPlanDP::AccelerationPersonality::NORMAL))}},
     {"AccelPersonalityEnabled", {PERSISTENT, BOOL, "1"}},
 };

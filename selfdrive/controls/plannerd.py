@@ -36,8 +36,8 @@ def main():
 
   dp_flags = 0
 
-  if params.get_bool("dp_lon_acm"):
-    dp_flags |= DPFlags.ACM
+  if params.get_bool("dp_lon_ocm"):
+    dp_flags |= DPFlags.OCM
   if params.get_bool("dp_lon_aem"):
     dp_flags |= DPFlags.AEM
   if params.get_bool("dp_lon_dtsc"):

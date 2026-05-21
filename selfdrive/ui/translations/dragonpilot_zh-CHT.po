@@ -27,12 +27,6 @@ msgstr "+ 自動變換車道延遲："
 msgid "0 min = Immediately"
 msgstr "0 分鐘 = 立即"
 
-#: dragonpilot/settings.py:149
-#, python-format
-msgid ""
-"Adaptive Coasting Mode (ACM) reduces braking to allow smoother coasting when "
-"appropriate."
-msgstr "自適應滑行模式 (ACM) 在適當情況下減少煞車，實現更平順的滑行。"
 
 #: dragonpilot/settings.py:154
 #, python-format
@@ -46,9 +40,8 @@ msgstr "自適駕駛風格 (APM)"
 
 #: dragonpilot/settings.py:155
 #, python-format
-msgid ""
-"Adaptive mode switcher between ACC and Blended based on driving context."
-msgstr "根據駕駛情境自動在 ACC 和混合模式間切換。車速70公里以上關閉動態實驗模式。"
+msgid "The mode automatically switches based on the vehicle in front. It is recommended to maintain the standard mode."
+msgstr "自動根據前車動態切換風格。建議維持標準模式。"
 
 #: dragonpilot/settings.py:224
 #, python-format

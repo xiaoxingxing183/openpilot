@@ -1342,11 +1342,11 @@ msgstr "觸發角度"
 msgid "Driver steering angle that triggers HTD (degrees)."
 msgstr "觸發人工轉彎檢測的方向盤角度（度）。"
 
-msgid "Dynamic Follow Mode (DFM)"
-msgstr "動態車距模式 (DFM)"
+msgid "Overtaking Coasting Mode (OCM)"
+msgstr "超車滑行模式 (OCM)"
 
-msgid "Dynamically adjusts the follow distance based on speed and selected longitudinal personality."
-msgstr "根據速度和選定的縱向特性動態調整跟車距離。"
+msgid "Smoothly coast down to your set speed without engine braking when you exceed the cruise speed by 20 km/h after overtaking."
+msgstr "超車後，如果車速超過巡航速度 20 公里/小時，將平穩滑行至設定速度，不使用煞車。"
 
 msgid "Dynamic Accel Personality"
 msgstr "動態加速度模式開關"

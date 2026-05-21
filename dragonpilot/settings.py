@@ -164,13 +164,12 @@ SETTINGS = [
   },
   {
     "title": "Longitudinal",
-   # "condition": "openpilotLongitudinalControl", #隱藏縱向代碼
     "settings": [
       {
-        "key": "dp_lon_acm",
+        "key": "dp_lon_ocm",
         "type": "toggle_item",
-        "title": lambda: tr("Enable Adaptive Coasting Mode (ACM)"),
-        "description": lambda: tr("Adaptive Coasting Mode (ACM) reduces braking to allow smoother coasting when appropriate."),
+        "title": lambda: tr("Overtaking Coasting Mode (OCM)"),
+        "description": lambda: tr("Smoothly coast down to your set speed without engine braking when you exceed the cruise speed by 20 km/h after overtaking."),
       },
       {
         "key": "dp_lon_aem",
@@ -188,7 +187,7 @@ SETTINGS = [
         "key": "dp_lon_apm",
         "type": "toggle_item",
         "title": lambda: tr("Adaptive Personality Mode (APM)"),
-        "description": lambda: tr("Automatically switches personality to \"Aggressive\" below 30 km/h and restores your selected personality above 40 km/h."),
+        "description": lambda: tr("The mode automatically switches based on the vehicle in front. It is recommended to maintain the standard mode."),
       },
       {
         "key": "dp_lon_dasr",
@@ -217,9 +216,9 @@ SETTINGS = [
           lambda: tr("Normal"),
           lambda: tr("Eco"),
         ],
-      }, # <--- 修正處：補上這個逗號與括號
-    ],   # <--- 修正處：補上這個逗號與括號
-  },     # <--- 修正處：補上這個逗號與括號
+      },
+    ],
+  },
   {
     "title": "UI",
     "condition": "not MICI",

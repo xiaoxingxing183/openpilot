@@ -23,7 +23,6 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 # Cooldown times (how long to stay in experimental mode after trigger)
 AEM_COOLDOWN_STOP = 0.5      # seconds - for stop sign/light detection
 AEM_COOLDOWN_TTC = 2.0       # seconds - for lead TTC events
-AEM_COOLDOWN_LANE = 0.5      # seconds - 💡 新增：車道線消失後的殘留維持時間
 
 # Stop sign/light detection thresholds
 SLOW_DOWN_BP = [0., 2.78, 5.56, 8.34, 11.12, 13.89, 15.28]
@@ -42,8 +41,7 @@ GREEN_LIGHT_FRAMES = 5       # consecutive frames model must show clear path
 # --- 自訂閾值設定 ---
 SPEED_DISABLE_AEM = 70.0 / 3.6  # m/s (70 km/h) - 超過此速度關閉 AEM
 SPEED_ENABLE_AEM = 65.0 / 3.6   # m/s (65 km/h) - 低於此速度重新開啟 AEM
-LEAD_DIST_FORCE_ACC = 8.0       # meters - 前車距離低於此值時，強制保持 ACC 模式
-LANE_CONF_THRESHOLD = 0.3       # 車道線信心度低於 30% 觸發實驗模式
+LEAD_DIST_FORCE_ACC = 8.0      # meters - 前車距離低於此值時，強制保持 ACC 模式
 
 
 class AEM:
@@ -64,21 +62,20 @@ class AEM:
     self._cooldown_end_time = max(self._cooldown_end_time, new_end)
 
   def get_mode(self, mode):
-    # 檢查當下是否正在處理紅綠燈、急煞，或是「車道線剛恢復的 1.5 秒內」
+    # 檢查當下是否正在處理紅綠燈煞停或 TTC 急煞
     is_active_event = time.monotonic() < self._cooldown_end_time
 
-    # 1. 高速限制 (最高優先權)：大於 70 km/h 直接關閉 AEM
+    # 1. 高速限制：大於 70 km/h 直接關閉 AEM (不需要處理高速紅綠燈)
     if not self._speed_allowed:
       self._active = False
       return mode
 
-    # 2. 距離限制：如果在 8m 內，但「沒有」正在處理任何事件，才強制 ACC
-    # (如果正在處理車道線模糊，此防線會被安全地繞過，維持實驗模式)
+    # 2. 距離限制 (修復陷阱)：如果在 8m 內，但「沒有」正在處理紅燈或急煞，才強制 ACC
     if self._force_acc and not is_active_event:
       self._active = False
       return mode
 
-    # 3. 正常觸發邏輯：若事件仍在維持時間內，進入 blended
+    # 3. 正常觸發邏輯：若正在處理紅燈/急煞，則進入 blended
     if is_active_event:
       mode = 'blended'
     else:
@@ -96,51 +93,29 @@ class AEM:
     # 2. 更新強制 ACC 狀態
     self._force_acc = radar_msg.leadOne.status and radar_msg.leadOne.dRel <= LEAD_DIST_FORCE_ACC
 
-    # 3. 更新車道線信心度 (加入 1.5 秒視覺殘留延遲)
-    if len(model_msg.laneLineProbs) >= 3:
-      l_prob = model_msg.laneLineProbs[1]
-      r_prob = model_msg.laneLineProbs[2]
-      if (l_prob < LANE_CONF_THRESHOLD) or (r_prob < LANE_CONF_THRESHOLD):
-        # 只要有一瞬間沒線，就強制維持 1.5 秒的實驗模式
-        self._perform_experimental_mode(AEM_COOLDOWN_LANE)
-    else:
-      self._perform_experimental_mode(AEM_COOLDOWN_LANE)
-
     # =========================================================
-    # Stop sign/light detection (台灣市區闖燈刺客防護版 + 閘道大彎道豁免)
+    # Stop sign/light detection (台灣市區動態緩衝版)
     # =========================================================
     if len(model_msg.orientation.x) == len(model_msg.position.x) == ModelConstants.IDX_N:
       
       expected_stop_dist = np.interp(v_ego, SLOW_DOWN_BP, SLOW_DOWN_DIST)
       model_end_x = model_msg.position.x[ModelConstants.IDX_N - 1]
       
-      # 模型預測需要煞車 (路徑被截斷)
+      # 1. 模型預測需要煞車
       if model_end_x < expected_stop_dist:
         
-        # 💡 --- 新增：大彎道 (閘道) 豁免邏輯 ---
-        # 取得模型預測終點的左右偏移量 (取絕對值)
-        curve_y_offset = abs(model_msg.position.y[ModelConstants.IDX_N - 1])
+        # 2. 智慧前車過濾 (Smart Lead Filter) - 台灣市區優化版
+        has_lead = radar_msg.leadOne.status
+        lead_dist = radar_msg.leadOne.dRel if has_lead else 999.0
         
-        # 設定閾值：路徑短於 25m，且左右偏移大於 2.5m (模擬交流道大彎曲率)
-        is_sharp_ramp_curve = (model_end_x < 25.0) and (curve_y_offset > 2.5)
-        # ------------------------------------
+        # 🛡️ 動態緩衝計算：最低 8 公尺 (原廠煞停距離 6m + 2m 容錯)
+        # 加入 v_ego * 0.4 的速度補償，車速越快，給予的判斷緩衝稍微拉長防震盪
+        dynamic_buffer = max(8.0, v_ego * 0.4)
         
-        # 只有在「不是閘道大彎道」的情況下，才繼續進行 AEM 觸發判斷
-        if not is_sharp_ramp_curve:
-            has_lead = radar_msg.leadOne.status
-            lead_dist = radar_msg.leadOne.dRel if has_lead else 999.0
-            v_rel = radar_msg.leadOne.vRel if has_lead else 0.0
-            v_lead = radar_msg.leadOne.vLead if has_lead else 0.0
-            
-            # 🛡️ 基礎動態緩衝：前車已經完全離開 (距離拉得很遠)
-            dynamic_buffer = max(8.0, v_ego * 0.3)
-            
-            # 🚨 闖燈刺客偵測 (Runner Detection)
-            is_runner = has_lead and (v_lead > 5.5) and (v_rel > -0.5) and (lead_dist > model_end_x + 4.0)
-            
-            # 觸發條件：沒車 / 前車跑遠了 / 判定前車正在闖紅燈！
-            if not has_lead or (lead_dist > model_end_x + dynamic_buffer) or is_runner:
-                self._perform_experimental_mode(AEM_COOLDOWN_STOP)
+        # 觸發條件：沒有前車，或者是「前車已經越過模型預期的停止線 (前車闖燈或太遠)」
+        if not has_lead or (lead_dist > model_end_x + dynamic_buffer):
+            self._perform_experimental_mode(AEM_COOLDOWN_STOP)
+
     # =========================================================
 
     # Green light resume
