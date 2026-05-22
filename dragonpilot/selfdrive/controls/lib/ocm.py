@@ -1,41 +1,43 @@
 import time
 import numpy as np
 from openpilot.common.swaglog import cloudlog
+from openpilot.common.params import Params
+from openpilot.common.realtime import DT_MDL
 
 # =========================================================
 # OCM 參數設定區
 # =========================================================
-# ++ 修改：將門檻降至 2.0，解除降至 1.0，確保只要稍微高於定速就能滑行 ++
 OVERTAKE_THRESHOLD = 2.0 / 3.6   # 2 km/h - 只要比定速快 2 公里，就允許進入滑行
 HYSTERESIS_OFFSET = 1.0 / 3.6    # 1 km/h - 保持滑行直到接近定速時才解除
 TTC_THRESHOLD = 2.0             # 秒 - 前方 2.0 秒內有車即停用
 
-# ++ 車速總開關參數 ++
-MIN_SPEED_ENABLE = 40.0 / 3.6    # 40 km/h - 車速大於此值打開總開關
-MIN_SPEED_DISABLE = 30.0 / 3.6   # 30 km/h - 車速小於此值關閉總開關
+# 修改：上調車速開關門檻 (50 km/h 打開，40 km/h 關閉)
+MIN_SPEED_ENABLE = 50.0 / 3.6    # 50 km/h - 車速大於此值打開總開關
+MIN_SPEED_DISABLE = 40.0 / 3.6   # 40 km/h - 車速小於此值關閉總開關
 
 # 緊急安全防線
 EMERGENCY_TTC = 2.0
 EMERGENCY_RELATIVE_SPEED = 10.0
 EMERGENCY_DECEL_THRESHOLD = -1.5 # 煞車力道超過此值視為緊急狀況，立刻交還控制權
 
-# 動態安全距離參數 (移植自新版 ACM)
+# 動態安全距離參數
 SPEED_BP = [0., 10., 20., 30.]
 MIN_DIST_V = [5., 10., 15., 20.]
 
-# 坡度參數 (移植自新版 ACM)
+# 坡度參數
 PITCH_SMOOTH_ALPHA_UP = 0.30           
-# ++ 修改：提高下坡反應靈敏度，從 0.05 提升至 0.15 ++
 PITCH_SMOOTH_ALPHA_DOWN = 0.15
 PITCH_DOWNHILL_THRESHOLD = -0.030      # 判定為下坡的閾值 (-3% 坡度)
 
 
 class OCM:
   def __init__(self):
-    self.enabled = False
+    self.params = Params()
+    self.frame = 0
+    
     self.active = False
     self.just_disabled = False
-    self.speed_allowed = False  # ++ 新增：記錄車速總開關目前的狀態 ++
+    self.speed_allowed = False  
     
     self._is_speed_over_cruise = False
     self._has_lead = False
@@ -45,6 +47,19 @@ class OCM:
     # 坡度記憶
     self.current_pitch = 0.0              
     self._is_first_pitch = True           
+
+    # 初始化開關狀態
+    self._enabled = self.params.get_bool("dp_lon_ocm")
+
+  def update(self, sm=None):
+    """依照系統物理週期更新 Params，參照 accel_controller"""
+    self.frame += 1
+    # 利用 DT_MDL 換算真實物理時間，精準每 10.0 秒讀取一次 Params
+    if self.frame % int(10.0 / DT_MDL) == 0:
+      self._enabled = self.params.get_bool("dp_lon_ocm")
+
+  def is_enabled(self) -> bool:
+    return self._enabled
 
   def _update_pitch(self, orientation_ned):
     """更新並平滑化道路坡度資訊"""
@@ -66,10 +81,8 @@ class OCM:
     self.lead_ttc = lead.dRel / closing_speed
     relative_speed = v_ego - lead.vLead
     
-    # 動態最小安全距離
     min_dist_for_speed = np.interp(v_ego, SPEED_BP, MIN_DIST_V)
 
-    # 如果極度危險，或在最小距離內且速差大於 0，立刻強制解除
     if (self.lead_ttc < EMERGENCY_TTC) or \
        (relative_speed > EMERGENCY_RELATIVE_SPEED) or \
        (lead.dRel < min_dist_for_speed and relative_speed > 0):
@@ -97,14 +110,10 @@ class OCM:
     if self.current_pitch < PITCH_DOWNHILL_THRESHOLD:
         return False
 
-    # =========================================================
-    # ++ 新增：+20 上限防護 ++
-    # 如果當前車速大於「定速 + 20km/h」，強制不啟動滑行 (交給系統降速)
-    # =========================================================
+    # +20 上限防護：如果當前車速大於「定速 + 20km/h」，強制不啟動滑行
     if v_ego > (v_cruise + 20.0 / 3.6):
         return False
 
-    # 狀態鎖定邏輯 (確保滑行不中斷)
     if self.active:
       self._is_speed_over_cruise = v_ego > (v_cruise + HYSTERESIS_OFFSET)
     else:
@@ -114,28 +123,32 @@ class OCM:
             not in_cooldown and self._is_speed_over_cruise)
 
   def update_states(self, cc, rs, user_ctrl_lon, v_ego, v_cruise, sccv_active):
-    # =========================================================
-    # ++ 新增：車速總開關狀態更新 (30關閉 40打開) ++
-    # =========================================================
+    # 車速總開關狀態更新 (40關閉 50打開)
     if v_ego >= MIN_SPEED_ENABLE:
       self.speed_allowed = True
     elif v_ego <= MIN_SPEED_DISABLE:
       self.speed_allowed = False
 
-    # 如果總系統未啟用，或是車速總開關被關閉，則不作動 OCM
-    if not self.enabled or not self.speed_allowed:
+    # =========================================================
+    # [新增] 絕對硬防線：當前車速低於巡航車速時，強制關閉 OCM
+    # 確保低於定速跟車、中低速與煞停時，OCM 完全靜默，把控制權留給標準縱向規劃器
+    # =========================================================
+    if v_ego < v_cruise:
+      self.active = False
+      self._active_prev = False
+      return
+
+    # 如果開關未啟用，或者車速總開關被關閉，則不作動 OCM
+    if not self._enabled or not self.speed_allowed:
       self.active = False
       return
       
-    # =========================================================
-    # ++ 新增：如果 SCC-V 正在過彎主動介入，強制關閉 OCM 停止滑行 ++
-    # =========================================================
+    # 如果 SCC-V 正在過彎主動介入，強制關閉 OCM 停止滑行
     if sccv_active:
       self.active = False
       self._active_prev = False
       return
 
-    # 每次更新先讀取坡度
     self._update_pitch(cc.orientationNED)
       
     current_time = time.monotonic()
@@ -164,10 +177,9 @@ class OCM:
       self.active = False
       return a_desired_trajectory
 
-    # 取消滑行下限，實現平順滑行
+    # 取消滑行下限，實現平順滑行 (保留 -1.0 的過彎穩定底線)
     modified = np.copy(a_desired_trajectory)
     for i in range(len(modified)):
-      # 保留 -1.0 的彎道/微煞車安全底線，確保過彎穩定性
       if -1.0 < modified[i] < 0:
         modified[i] = 0.0
         
